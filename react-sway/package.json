@@ -1,0 +1,63 @@
+{
+  "author": {
+    "name": "Mehdy Lafitte",
+    "url": "https://github.com/lafittemehdy"
+  },
+  "bugs": {
+    "url": "https://github.com/lafittemehdy/sway/issues"
+  },
+  "description": "A React component for smooth infinite scrolling, designed for creating engaging, continuous content streams with minimal configuration.",
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react": "^7.35.0",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsup": "^8.2.3",
+    "typescript": "^5.5.4"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "homepage": "https://github.com/lafittemehdy/sway#readme",
+  "keywords": [
+    "content-stream",
+    "continuous-scroll",
+    "frontend",
+    "infinite-scroll",
+    "javascript",
+    "react",
+    "react-component",
+    "scroller",
+    "smooth-scroll",
+    "typescript",
+    "ui-component"
+  ],
+  "license": "MIT",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "name": "react-sway",
+  "peerDependencies": {
+    "react": ">=16.8.0",
+    "react-dom": ">=16.8.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lafittemehdy/sway.git"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --external react",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --external react --watch",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "prepublishOnly": "npm run build"
+  },
+  "type": "module",
+  "types": "dist/index.d.ts",
+  "version": "0.1.0"
+}

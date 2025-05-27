@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src",
+    "vite.config.ts",
+    "eslint.config.js", // Include eslint.config.js itself
+    "react-sway/src"
+    // any other files/patterns you want to lint
+  ],
+  "compilerOptions": {
+    "noEmit": true // Typically, you don't want to emit JS from your ESLint-specific config
+  }
+}
