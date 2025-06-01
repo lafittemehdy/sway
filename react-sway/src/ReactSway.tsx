@@ -44,7 +44,7 @@ function ReactSway({ children }: ReactSwayProps) {
         const currentContentHeight = containerRef.current.scrollHeight;
         const calculatedLoopPoint = currentContentHeight / 3;
 
-        console.log('Calculating dimensions:', { currentContentHeight, calculatedLoopPoint });
+        // console.log('Calculating dimensions:', { currentContentHeight, calculatedLoopPoint });
 
         if (currentContentHeight > 0) {
           setContentHeight(currentContentHeight);
@@ -354,24 +354,6 @@ function ReactSway({ children }: ReactSwayProps) {
     };
   }, [children, contentHeight]);
 
-  // Apply styles to override conflicting CSS
-  useEffect(() => {
-    const originalBodyStyle = {
-      touchAction: document.body.style.touchAction,
-      overflow: document.body.style.overflow
-    };
-
-    // Override body styles that might conflict
-    document.body.style.touchAction = 'none';
-    document.body.style.overflow = 'hidden';
-
-    return () => {
-      // Restore original styles
-      document.body.style.touchAction = originalBodyStyle.touchAction;
-      document.body.style.overflow = originalBodyStyle.overflow;
-    };
-  }, []);
-
   return (
     <div
       className="react-sway-container scroller-content"
@@ -389,6 +371,7 @@ function ReactSway({ children }: ReactSwayProps) {
         msUserSelect: 'none',
         MozUserSelect: 'none',
         overscrollBehavior: 'contain',
+        overflow: 'hidden', // Prevent component's content from overflowing and causing page scroll
         // Ensure it's on top and can receive events
         pointerEvents: 'auto',
         zIndex: 1
