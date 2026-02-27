@@ -1,12 +1,19 @@
+/**
+ * Shared ESLint flat config for the monorepo workspace.
+ */
 import js from '@eslint/js';
-import globals from 'globals';
-import reactHooks from 'eslint-plugin-react-hooks';
-import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
+import reactHooks from 'eslint-plugin-react-hooks';
+import reactRefresh from 'eslint-plugin-react-refresh';
+import globals from 'globals';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 export default [
-  { ignores: ['dist', 'node_modules', '.turbo', 'build'] },
+  { ignores: ['.turbo', 'build', 'dist', 'eslint.config.js', 'node_modules', 'react-sway/dist'] },
   {
     files: ['**/*.{js,jsx,mjs,cjs,ts,tsx}'],
     languageOptions: {
@@ -17,10 +24,11 @@ export default [
       },
       parser: tsParser,
       parserOptions: {
-        ecmaVersion: 'latest',
         ecmaFeatures: { jsx: true },
-        sourceType: 'module',
+        ecmaVersion: 'latest',
         project: './tsconfig.eslint.json',
+        sourceType: 'module',
+        tsconfigRootDir: ROOT_DIR,
       },
     },
     plugins: {
@@ -32,26 +40,13 @@ export default [
       ...js.configs.recommended.rules,
       ...tseslint.configs['eslint-recommended'].rules,
       ...tseslint.configs.recommended.rules,
-      // ...tseslint.configs['recommended-requiring-type-checking'].rules, // Consider adding for stricter rules
       ...reactHooks.configs.recommended.rules,
-      'no-unused-vars': 'off', // Disable base rule as @typescript-eslint/no-unused-vars is used
-      '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]', argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^[A-Z_]' }],
+      'no-unused-vars': 'off',
       'react-refresh/only-export-components': [
         'warn',
         { allowConstantExport: true },
       ],
     },
   },
-  // Specific overrides for JS files if needed, e.g. if not using TS parser for them
-  // {
-  //   files: ['**/*.{js,jsx,mjs,cjs}'],
-  //   languageOptions: {
-  //     parserOptions: {
-  //       project: null, // Don't use tsconfig for JS files
-  //     },
-  //   },
-  //   rules: {
-  //     '@typescript-eslint/explicit-function-return-type': 'off',
-  //   }
-  // }
 ];
