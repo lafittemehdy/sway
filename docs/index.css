@@ -23,14 +23,6 @@ body {
     width: 100%;
 }
 
-.scroller-content {
-    -webkit-transform: translateZ(0);
-    position: absolute;
-    transform: translateZ(0);
-    width: 100%;
-    will-change: transform;
-}
-
 .content-group {
     position: relative;
 }

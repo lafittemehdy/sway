@@ -1,72 +1,70 @@
-# Sway Monorepo
+# Sway
 
-This repository contains the `react-sway` package and a demo application (Sway) showcasing its capabilities. `react-sway` helps you create smooth, infinitely scrolling content streams with minimal setup.
+[![CI](https://github.com/lafittemehdy/sway/actions/workflows/ci.yml/badge.svg)](https://github.com/lafittemehdy/sway/actions/workflows/ci.yml)
+[![Deploy Demo](https://github.com/lafittemehdy/sway/actions/workflows/pages.yml/badge.svg)](https://github.com/lafittemehdy/sway/actions/workflows/pages.yml)
+[![npm](https://img.shields.io/npm/v/react-sway)](https://www.npmjs.com/package/react-sway)
 
-**See the Demo:** [lafittemehdy.github.io/sway/](https://lafittemehdy.github.io/sway/)
+A monorepo for [`react-sway`](https://www.npmjs.com/package/react-sway) and its demo app.
 
-[![pages-build-deployment](https://github.com/lafittemehdy/sway/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/lafittemehdy/sway/actions/workflows/pages/pages-build-deployment)
+**[Live Demo](https://lafittemehdy.github.io/sway/)**
 
-## Project Structure
+## What is react-sway?
 
-This is a monorepo managed with npm workspaces.
+A React component that turns a list of items into a smooth, infinitely scrolling loop. It auto-scrolls, pauses when users interact, and works with touch, mouse, wheel, and keyboard out of the box.
 
-*   `react-sway/`: The core `react-sway` npm package.
-    *   See [`react-sway/README.md`](./react-sway/README.md) for detailed usage and API documentation.
-*   `docs/`: The source code for the demo application (Sway) that uses `react-sway`.
+Under the hood it duplicates your content with CSS transforms to keep things seamless. The duplicated blocks are wrapped in `<aside>` elements with `aria-hidden="true"` so screen readers and search engines aren't confused.
 
-## What's `react-sway`?
+### Features
 
-React Sway takes your list of items and makes them scroll endlessly. It's designed to be easy to use and performant, with auto-scrolling that pauses when users interact.
-It works by duplicating your content to create a seamless loop and uses CSS transforms for smooth animation. The duplicated content is wrapped in `<aside>` elements with `aria-hidden="true"` and `role="presentation"` to ensure good accessibility and helps search engines understand the content structure.
+- Infinite looping scroll with configurable speed
+- Click-and-drag, swipe, mouse wheel, and keyboard controls (Space, ArrowUp/Down, Home/End)
+- Pauses auto-scroll on user interaction
+- Responsive to window resizing
+- Visibility hook: add a `content-item` class and react-sway toggles a `.visible` class when elements enter the viewport
 
-### Core Features of `react-sway`
+Check out the [react-sway README](./react-sway/README.md) for full API docs and usage examples.
 
-*   **Smooth Infinite Scroll:** Content loops continuously.
-*   **Auto-Scroll:** Scrolls automatically, with configurable speed.
-*   **User Friendly Interactions:**
-    *   Click and drag to scroll.
-    *   Swipe on touch devices.
-    *   Mouse wheel support.
-    *   Keyboard controls: Spacebar to pause/resume, ArrowUp/ArrowDown to scroll, Home/End to jump.
-*   **Responsive:** Adjusts to window resizing.
-*   **Lazy Loading Hook:** Add a `content-item` class to your child elements, and `react-sway` will add a `.visible` class when they enter the viewport. Handy for animations or loading content.
+## Project structure
 
-For detailed information on how to use `react-sway`, its props, and styling, please see the [**`react-sway` package README**](./react-sway/README.md).
+```
+sway/
+  docs/         # Demo app source
+  react-sway/   # The npm package
+```
 
-## Running the Demo Project (Sway)
+## Getting started
 
-This repo includes a demo app to see `react-sway` in action.
+```bash
+git clone https://github.com/lafittemehdy/sway.git
+cd sway
+npm install
+npm run dev
+```
 
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/lafittemehdy/sway.git
-    cd sway
-    ```
+The demo runs at `http://localhost:5173` by default.
 
-2.  **Install dependencies:**
-    (This will install dependencies for both the root and the `react-sway` package)
-    ```bash
-    npm install
-    ```
+## Scripts
 
-3.  **Run the demo:**
-    ```bash
-    npm run dev
-    ```
-    The demo will usually be available at `http://localhost:5173`.
+| Command             | Description                          |
+| ------------------- | ------------------------------------ |
+| `npm run dev`       | Start the demo dev server            |
+| `npm run build`     | Build the demo for production        |
+| `npm run lint`      | Lint the whole monorepo              |
+| `npm run preview`   | Preview the production build locally |
+| `npm run deploy`    | Deploy the demo to GitHub Pages      |
 
-## Demo Project Scripts
+## CI/CD
 
-*   `npm run dev`: Start dev server for the demo application.
-*   `npm run build`: Build the demo application for production.
-*   `npm run lint`: Check code with ESLint for the entire monorepo.
-*   `npm run preview`: Serve the production build of the demo locally.
-*   `npm run deploy`: Push the `dist` folder (demo build output) to GitHub Pages.
+This repo uses GitHub Actions for automation:
+
+- **Test** (`ci.yml`) runs lint and tests on Node 22 and 24 for every push and PR to `main`.
+- **Deploy Demo** (`pages.yml`) builds and deploys the demo to GitHub Pages when relevant files change on `main`.
+- **Publish** (`publish.yml`) publishes `react-sway` to npm when a GitHub release is created.
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request.
+Contributions are welcome! Open an issue or submit a pull request.
 
 ## License
 
-This project is licensed under the [MIT License](./LICENSE).
+[MIT](./LICENSE)

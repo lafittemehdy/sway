@@ -1,0 +1,53 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            react-sway/package-lock.json
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install react-sway dependencies
+        run: cd react-sway && npm ci
+
+      - name: Build react-sway
+        run: cd react-sway && npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: cd react-sway && npm test
+
+      - name: Publish to npm
+        run: cd react-sway && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

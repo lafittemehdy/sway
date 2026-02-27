@@ -1,0 +1,79 @@
+name: Test
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Test on Node.js ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22.x, 24.x]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            react-sway/package-lock.json
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install react-sway dependencies
+        run: cd react-sway && npm ci
+
+      - name: Build react-sway
+        run: cd react-sway && npm run build
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run tests
+        run: cd react-sway && npm test
+
+  build-check:
+    name: Build verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            react-sway/package-lock.json
+          node-version: 22.x
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install react-sway dependencies
+        run: cd react-sway && npm ci
+
+      - name: Build react-sway
+        run: cd react-sway && npm run build
+
+      - name: Build demo app
+        run: npm run build
+
+      - name: Verify package can be packed
+        run: cd react-sway && npm pack
