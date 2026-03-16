@@ -1,7 +1,16 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+/** Velocity applied per arrow key press (pixels). */
+const ARROW_KEY_VELOCITY = 15;
 
 /** Default friction coefficient applied to velocity each frame. */
 const DEFAULT_FRICTION = 0.95;
+
+/** Default IntersectionObserver rootMargin for lazy visibility detection. */
+const DEFAULT_LAZY_ROOT_MARGIN = '100px';
+
+/** Default IntersectionObserver threshold for lazy visibility detection. */
+const DEFAULT_LAZY_THRESHOLD = 0.01;
 
 /** Default delay in milliseconds before auto-scroll resumes after user interaction. */
 const DEFAULT_RESUME_DELAY = 2000;
@@ -9,11 +18,26 @@ const DEFAULT_RESUME_DELAY = 2000;
 /** Default scroll speed in pixels per frame at 60fps. */
 const DEFAULT_SPEED = 0.5;
 
+/** Number of stacked content groups used to build the seamless loop. */
+const LOOP_SEGMENTS = 3;
+
 /** Maximum deltaTime cap to prevent physics instability during frame drops. */
 const MAX_DELTA_TIME = 3;
 
-/** Number of stacked content groups used to build the seamless loop. */
-const LOOP_SEGMENTS = 3;
+/** Maximum allowed velocity magnitude to prevent runaway scrolling. */
+const MAX_VELOCITY = 150;
+
+/** Duration of a single frame at 60fps in milliseconds. */
+const MS_PER_FRAME_60FPS = 16.667;
+
+/** Speed multiplier when user prefers reduced motion (25% of normal). */
+const REDUCED_MOTION_SPEED_FACTOR = 0.25;
+
+/** Debounce delay in milliseconds for ResizeObserver callbacks. */
+const RESIZE_DEBOUNCE_MS = 150;
+
+/** Multiplier applied to wheel deltaY to convert to scroll velocity. */
+const WHEEL_VELOCITY_MULTIPLIER = 0.3;
 
 /**
  * Props for the ReactSway infinite scrolling component.
@@ -31,6 +55,12 @@ export interface ReactSwayProps {
   friction?: number;
   /** Enable keyboard controls (Space, ArrowUp/Down, Home/End). @default true */
   keyboard?: boolean;
+  /** Enable lazy visibility detection via IntersectionObserver. @default true */
+  lazy?: boolean;
+  /** IntersectionObserver rootMargin for lazy visibility detection. @default '100px' */
+  lazyRootMargin?: string;
+  /** IntersectionObserver threshold for lazy visibility detection. @default 0.01 */
+  lazyThreshold?: number;
   /** Fired when scrolling pauses (user interaction or Space key). */
   onPause?: () => void;
   /** Fired when scrolling resumes after pause. */
@@ -55,6 +85,9 @@ export interface ReactSwayProps {
  * Content is duplicated to create a seamless loop effect. Duplicate content
  * is wrapped in `<aside>` elements with `aria-hidden="true"` for accessibility.
  *
+ * Respects `prefers-reduced-motion: reduce` by lowering auto-scroll speed
+ * and disabling momentum effects.
+ *
  * @example
  * ```tsx
  * <ReactSway direction="up" speed={1} friction={0.9}>
@@ -70,6 +103,9 @@ function ReactSway({
   draggable = true,
   friction = DEFAULT_FRICTION,
   keyboard = true,
+  lazy = true,
+  lazyRootMargin = DEFAULT_LAZY_ROOT_MARGIN,
+  lazyThreshold = DEFAULT_LAZY_THRESHOLD,
   onPause,
   onResume,
   onScroll,
@@ -78,24 +114,30 @@ function ReactSway({
   speed = DEFAULT_SPEED,
   wheelEnabled = true,
 }: ReactSwayProps) {
-  const normalizedFriction = Number.isFinite(friction)
-    ? Math.min(Math.max(friction, 0), 1)
-    : DEFAULT_FRICTION;
-  const normalizedResumeDelay = Number.isFinite(resumeDelay)
-    ? Math.max(0, resumeDelay)
-    : DEFAULT_RESUME_DELAY;
-  const normalizedSpeed = Number.isFinite(speed)
-    ? Math.max(0, speed)
-    : DEFAULT_SPEED;
+  const normalizedFriction = useMemo(
+    () => (Number.isFinite(friction) ? Math.min(Math.max(friction, 0), 1) : DEFAULT_FRICTION),
+    [friction],
+  );
+  const normalizedResumeDelay = useMemo(
+    () => (Number.isFinite(resumeDelay) ? Math.max(0, resumeDelay) : DEFAULT_RESUME_DELAY),
+    [resumeDelay],
+  );
+  const normalizedSpeed = useMemo(
+    () => (Number.isFinite(speed) ? Math.max(0, speed) : DEFAULT_SPEED),
+    [speed],
+  );
 
   const [isDragging, setIsDragging] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isTabActive, setIsTabActive] = useState(true);
   const [loopPoint, setLoopPoint] = useState(0);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  });
 
   const animationFrameRef = useRef<number | null>(null);
-  const autoScrollEnabledRef = useRef(autoScroll);
-  const autoScrollPropRef = useRef(autoScroll);
+  const autoScrollRef = useRef({ active: autoScroll, desired: autoScroll });
   const containerRef = useRef<HTMLDivElement>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDraggingRef = useRef(false);
@@ -108,6 +150,7 @@ function ReactSway({
   const onResumeRef = useRef(onResume);
   const onScrollRef = useRef(onScroll);
   const positionRef = useRef(0);
+  const resizeDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const velocityRef = useRef(0);
 
   // Keep callback refs in sync without triggering re-renders
@@ -116,6 +159,19 @@ function ReactSway({
     onResumeRef.current = onResume;
     onScrollRef.current = onScroll;
   }, [onPause, onResume, onScroll]);
+
+  // Listen for prefers-reduced-motion media query changes
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const handleChange = (e: MediaQueryListEvent) => {
+      setPrefersReducedMotion(e.matches);
+    };
+    mediaQuery.addEventListener('change', handleChange);
+    return () => {
+      mediaQuery.removeEventListener('change', handleChange);
+    };
+  }, []);
 
   const clearInactivityTimer = useCallback(() => {
     if (!inactivityTimerRef.current) return;
@@ -167,10 +223,10 @@ function ReactSway({
 
   // Sync autoScroll prop changes with internal state
   useEffect(() => {
-    autoScrollPropRef.current = autoScroll;
+    autoScrollRef.current.desired = autoScroll;
     if (!autoScroll) {
       clearInactivityTimer();
-      autoScrollEnabledRef.current = true;
+      autoScrollRef.current.active = true;
     }
   }, [autoScroll, clearInactivityTimer]);
 
@@ -192,19 +248,19 @@ function ReactSway({
 
   const pauseAutoScroll = useCallback(() => {
     if (!pauseOnInteraction) return;
-    autoScrollEnabledRef.current = false;
+    autoScrollRef.current.active = false;
     onPauseRef.current?.();
     clearInactivityTimer();
   }, [clearInactivityTimer, pauseOnInteraction]);
 
   const scheduleAutoScrollResume = useCallback(() => {
-    if (!pauseOnInteraction || !autoScrollPropRef.current || isPausedRef.current) return;
+    if (!pauseOnInteraction || !autoScrollRef.current.desired || isPausedRef.current) return;
     clearInactivityTimer();
 
     inactivityTimerRef.current = setTimeout(() => {
       inactivityTimerRef.current = null;
-      if (!autoScrollPropRef.current || isPausedRef.current) return;
-      autoScrollEnabledRef.current = true;
+      if (!autoScrollRef.current.desired || isPausedRef.current) return;
+      autoScrollRef.current.active = true;
       onResumeRef.current?.();
     }, normalizedResumeDelay);
   }, [clearInactivityTimer, normalizedResumeDelay, pauseOnInteraction]);
@@ -215,12 +271,12 @@ function ReactSway({
     setIsPaused(newPaused);
     if (newPaused) {
       clearInactivityTimer();
-      autoScrollEnabledRef.current = false;
+      autoScrollRef.current.active = false;
       onPauseRef.current?.();
     } else {
       clearInactivityTimer();
-      autoScrollEnabledRef.current = true;
-      if (autoScrollPropRef.current) {
+      autoScrollRef.current.active = true;
+      if (autoScrollRef.current.desired) {
         onResumeRef.current?.();
       }
     }
@@ -236,13 +292,13 @@ function ReactSway({
         break;
       case 'ArrowDown':
         e.preventDefault();
-        velocityRef.current -= 15;
+        velocityRef.current -= ARROW_KEY_VELOCITY;
         pauseAutoScroll();
         scheduleAutoScrollResume();
         break;
       case 'ArrowUp':
         e.preventDefault();
-        velocityRef.current += 15;
+        velocityRef.current += ARROW_KEY_VELOCITY;
         pauseAutoScroll();
         scheduleAutoScrollResume();
         break;
@@ -327,7 +383,8 @@ function ReactSway({
   const handleWheel = useCallback((e: globalThis.WheelEvent) => {
     if (!wheelEnabled) return;
     e.preventDefault();
-    velocityRef.current -= e.deltaY * 0.3;
+    velocityRef.current -= e.deltaY * WHEEL_VELOCITY_MULTIPLIER;
+    velocityRef.current = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, velocityRef.current));
     pauseAutoScroll();
     scheduleAutoScrollResume();
   }, [pauseAutoScroll, scheduleAutoScrollResume, wheelEnabled]);
@@ -356,28 +413,49 @@ function ReactSway({
     };
   }, [handleMouseDown, handleMouseMove, handleMouseUp, handleTouchEnd, handleTouchMove, handleTouchStart, handleWheel]);
 
+  // Debounced resize handler shared by ResizeObserver and window resize fallback
+  const debouncedRecalculate = useCallback(() => {
+    if (resizeDebounceTimerRef.current) {
+      clearTimeout(resizeDebounceTimerRef.current);
+    }
+    resizeDebounceTimerRef.current = setTimeout(() => {
+      resizeDebounceTimerRef.current = null;
+      recalculateLoopPoint();
+    }, RESIZE_DEBOUNCE_MS);
+  }, [recalculateLoopPoint]);
+
   // Resize listener fallback for browsers without ResizeObserver
   useEffect(() => {
-    window.addEventListener('resize', recalculateLoopPoint);
+    window.addEventListener('resize', debouncedRecalculate);
 
     return () => {
-      window.removeEventListener('resize', recalculateLoopPoint);
+      window.removeEventListener('resize', debouncedRecalculate);
     };
-  }, [recalculateLoopPoint]);
+  }, [debouncedRecalculate]);
 
   // ResizeObserver keeps loop measurements in sync with async content changes
   useEffect(() => {
     if (!containerRef.current || typeof ResizeObserver === 'undefined') return;
 
     const observer = new ResizeObserver(() => {
-      recalculateLoopPoint();
+      debouncedRecalculate();
     });
     observer.observe(containerRef.current);
 
     return () => {
       observer.disconnect();
     };
-  }, [recalculateLoopPoint]);
+  }, [debouncedRecalculate]);
+
+  // Clean up resize debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (resizeDebounceTimerRef.current) {
+        clearTimeout(resizeDebounceTimerRef.current);
+        resizeDebounceTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Tab visibility handling
   useEffect(() => {
@@ -418,13 +496,15 @@ function ReactSway({
 
     const animate = (currentTime: number) => {
       let deltaTime = lastFrameTimeRef.current
-        ? (currentTime - lastFrameTimeRef.current) / 16.667
+        ? (currentTime - lastFrameTimeRef.current) / MS_PER_FRAME_60FPS
         : 1;
       deltaTime = Math.min(deltaTime, MAX_DELTA_TIME);
       lastFrameTimeRef.current = currentTime;
 
-      // Apply velocity damping
-      if (Math.abs(velocityRef.current) > 0.1) {
+      // Apply velocity damping (skip momentum in reduced-motion mode)
+      if (prefersReducedMotion) {
+        velocityRef.current = 0;
+      } else if (Math.abs(velocityRef.current) > 0.1) {
         velocityRef.current *= Math.pow(normalizedFriction, deltaTime);
       } else {
         velocityRef.current = 0;
@@ -432,9 +512,14 @@ function ReactSway({
 
       let nextPosition = positionRef.current;
 
+      // Calculate effective speed (reduced when user prefers reduced motion)
+      const effectiveSpeed = prefersReducedMotion
+        ? normalizedSpeed * REDUCED_MOTION_SPEED_FACTOR
+        : normalizedSpeed;
+
       // Auto-scroll when enabled and not dragging
-      if (autoScrollPropRef.current && autoScrollEnabledRef.current && !isDraggingRef.current) {
-        nextPosition += directionMultiplier * normalizedSpeed * deltaTime;
+      if (autoScrollRef.current.desired && autoScrollRef.current.active && !isDraggingRef.current) {
+        nextPosition += directionMultiplier * effectiveSpeed * deltaTime;
       }
 
       // Apply velocity momentum from user interaction
@@ -455,11 +540,11 @@ function ReactSway({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [commitPosition, direction, isPaused, isTabActive, normalizedFriction, normalizedSpeed, wrapPosition]);
+  }, [commitPosition, direction, isPaused, isTabActive, normalizedFriction, normalizedSpeed, prefersReducedMotion, wrapPosition]);
 
-  // Intersection Observer for lazy loading
+  // Intersection Observer for lazy visibility detection
   useEffect(() => {
-    if (!containerRef.current || typeof IntersectionObserver === 'undefined') return;
+    if (!lazy || !containerRef.current || typeof IntersectionObserver === 'undefined') return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -471,8 +556,8 @@ function ReactSway({
       },
       {
         root: null,
-        rootMargin: '100px',
-        threshold: 0.01,
+        rootMargin: lazyRootMargin,
+        threshold: lazyThreshold,
       }
     );
 
@@ -483,7 +568,7 @@ function ReactSway({
       items.forEach((item) => observer.unobserve(item));
       observer.disconnect();
     };
-  }, [children]);
+  }, [children, lazy, lazyRootMargin, lazyThreshold]);
 
   return (
     <div

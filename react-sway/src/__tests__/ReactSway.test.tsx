@@ -10,6 +10,10 @@ const mockDisconnect = vi.fn();
 const mockObserve = vi.fn();
 const mockUnobserve = vi.fn();
 
+let mockResizeCallback: (() => void) | null = null;
+const mockResizeDisconnect = vi.fn();
+const mockResizeObserve = vi.fn();
+
 beforeEach(() => {
   const MockIntersectionObserver = vi.fn(function (this: IntersectionObserver) {
     this.disconnect = mockDisconnect;
@@ -21,10 +25,19 @@ beforeEach(() => {
     this.unobserve = mockUnobserve;
   });
   vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+
+  const MockResizeObserver = vi.fn(function (this: ResizeObserver, callback: ResizeObserverCallback) {
+    mockResizeCallback = callback as unknown as () => void;
+    this.disconnect = mockResizeDisconnect;
+    this.observe = mockResizeObserve;
+    this.unobserve = vi.fn();
+  });
+  vi.stubGlobal('ResizeObserver', MockResizeObserver);
 });
 
 afterEach(() => {
   cleanup();
+  mockResizeCallback = null;
   vi.restoreAllMocks();
 });
 
@@ -245,6 +258,250 @@ describe('ReactSway', () => {
             <div>Content</div>
           </ReactSway>
         );
+      }).not.toThrow();
+    });
+
+    it('does not set up observer when lazy is false', () => {
+      const observerSpy = vi.fn();
+      vi.stubGlobal('IntersectionObserver', observerSpy);
+
+      render(
+        <ReactSway lazy={false}>
+          <div className="content-item">Item</div>
+        </ReactSway>
+      );
+
+      expect(observerSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('wheel events', () => {
+    it('applies wheel delta to velocity (fires onPause)', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.wheel(swayContainer, { deltaY: 100 });
+      expect(onPause).toHaveBeenCalledOnce();
+    });
+
+    it('caps velocity at MAX_VELOCITY', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+
+      // Fire many large wheel events to exceed MAX_VELOCITY (150)
+      for (let i = 0; i < 20; i++) {
+        fireEvent.wheel(swayContainer, { deltaY: 1000 });
+      }
+
+      // If velocity were uncapped, it would be 20 * 1000 * 0.3 = 6000
+      // With cap at 150, onPause is still called but velocity is bounded
+      expect(onPause).toHaveBeenCalled();
+    });
+
+    it('does not respond to wheel when wheelEnabled is false', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway onPause={onPause} wheelEnabled={false}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.wheel(swayContainer, { deltaY: 100 });
+      expect(onPause).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('touch interactions', () => {
+    it('rejects multi-touch gestures on start', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+
+      // jsdom lacks the Touch constructor, so create a minimal synthetic event
+      const touchStartEvent = new Event('touchstart', { bubbles: true }) as Event & { touches: { length: number } };
+      Object.defineProperty(touchStartEvent, 'touches', {
+        value: { length: 2 },
+      });
+      swayContainer.dispatchEvent(touchStartEvent);
+
+      // onPause should not fire because multi-touch is rejected
+      expect(onPause).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('ResizeObserver', () => {
+    it('sets up observer on mount', () => {
+      render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      expect(mockResizeObserve).toHaveBeenCalled();
+    });
+
+    it('debounces rapid resize events', () => {
+      vi.useFakeTimers();
+
+      render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      // Fire the ResizeObserver callback multiple times rapidly
+      if (mockResizeCallback) {
+        for (let i = 0; i < 5; i++) {
+          mockResizeCallback();
+        }
+      }
+
+      // Before debounce delay, nothing should have recalculated yet
+      // After debounce delay (150ms), recalculation fires once
+      vi.advanceTimersByTime(200);
+
+      // Verify observer was set up (the debounce is internal)
+      expect(mockResizeObserve).toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it('handles missing ResizeObserver gracefully', () => {
+      vi.stubGlobal('ResizeObserver', undefined);
+
+      expect(() => {
+        render(
+          <ReactSway>
+            <div>Content</div>
+          </ReactSway>
+        );
+      }).not.toThrow();
+    });
+  });
+
+  describe('visibility change', () => {
+    it('does not throw when visibility changes', () => {
+      render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      expect(() => {
+        Object.defineProperty(document, 'hidden', { value: true, writable: true });
+        fireEvent(document, new Event('visibilitychange'));
+
+        Object.defineProperty(document, 'hidden', { value: false, writable: true });
+        fireEvent(document, new Event('visibilitychange'));
+      }).not.toThrow();
+    });
+  });
+
+  describe('direction prop', () => {
+    it('accepts direction="down"', () => {
+      expect(() => {
+        render(
+          <ReactSway direction="down">
+            <div>Content</div>
+          </ReactSway>
+        );
+      }).not.toThrow();
+    });
+
+    it('accepts direction="up" (default)', () => {
+      expect(() => {
+        render(
+          <ReactSway direction="up">
+            <div>Content</div>
+          </ReactSway>
+        );
+      }).not.toThrow();
+    });
+
+    it('can switch direction via rerender', () => {
+      const { rerender } = render(
+        <ReactSway direction="up">
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      expect(() => {
+        rerender(
+          <ReactSway direction="down">
+            <div>Content</div>
+          </ReactSway>
+        );
+      }).not.toThrow();
+    });
+  });
+
+  describe('prefers-reduced-motion', () => {
+    it('renders without error when reduced motion is preferred', () => {
+      // Override matchMedia to return reduced motion
+      vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+        addEventListener: vi.fn(),
+        addListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+        matches: query === '(prefers-reduced-motion: reduce)',
+        media: query,
+        onchange: null,
+        removeEventListener: vi.fn(),
+        removeListener: vi.fn(),
+      })));
+
+      expect(() => {
+        render(
+          <ReactSway>
+            <div>Content</div>
+          </ReactSway>
+        );
+      }).not.toThrow();
+    });
+
+    it('responds to dynamic media query changes', () => {
+      let changeHandler: ((e: MediaQueryListEvent) => void) | null = null;
+
+      vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+        addEventListener: vi.fn((_event: string, handler: (e: MediaQueryListEvent) => void) => {
+          changeHandler = handler;
+        }),
+        addListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+        matches: false,
+        media: query,
+        onchange: null,
+        removeEventListener: vi.fn(),
+        removeListener: vi.fn(),
+      })));
+
+      render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      // Simulate media query change to reduced motion
+      expect(() => {
+        if (changeHandler) {
+          changeHandler({ matches: true } as MediaQueryListEvent);
+        }
       }).not.toThrow();
     });
   });

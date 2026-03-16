@@ -11,14 +11,15 @@ It works by duplicating your content to create a seamless loop and uses CSS tran
 ### Core Features
 
 *   **Smooth Infinite Scroll:** Content loops continuously.
-*   **Auto-Scroll:** Scrolls automatically, with configurable speed.
+*   **Auto-Scroll:** Scrolls automatically, with configurable speed and direction.
 *   **User Friendly Interactions:**
     *   Click and drag to scroll.
     *   Swipe on touch devices.
-    *   Mouse wheel support.
+    *   Mouse wheel support with velocity capping.
     *   Keyboard controls: Spacebar to pause/resume, ArrowUp/ArrowDown to scroll, Home/End to jump.
-*   **Responsive:** Adjusts to window resizing.
-*   **Lazy Loading Hook:** Add a `content-item` class to your child elements, and `react-sway` will add a `.visible` class when they enter the viewport. Handy for animations or loading content.
+*   **Responsive:** Adjusts to window resizing with debounced recalculation.
+*   **Lazy Visibility Detection:** Add a `content-item` class to your child elements, and `react-sway` automatically uses an IntersectionObserver to add a `.visible` class when they enter the viewport. Useful for triggering CSS animations or deferred rendering. Configurable via `lazy`, `lazyRootMargin`, and `lazyThreshold` props.
+*   **Reduced Motion Support:** Respects `prefers-reduced-motion: reduce` by lowering auto-scroll speed and disabling momentum effects.
 
 ## Installation
 
@@ -81,6 +82,27 @@ function SwayUsageExample() {
 
 export default SwayUsageExample;
 ```
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `autoScroll` | `boolean` | `true` | Enable/disable auto-scrolling. |
+| `children` | `ReactNode` | — | Content elements to render in the scroll container. |
+| `direction` | `'down' \| 'up'` | `'up'` | Auto-scroll direction. |
+| `draggable` | `boolean` | `true` | Enable mouse/touch drag interaction. |
+| `friction` | `number` | `0.95` | Momentum decay coefficient (0–1, lower = more friction). |
+| `keyboard` | `boolean` | `true` | Enable keyboard controls (Space, ArrowUp/Down, Home/End). |
+| `lazy` | `boolean` | `true` | Enable lazy visibility detection via IntersectionObserver. |
+| `lazyRootMargin` | `string` | `'100px'` | IntersectionObserver `rootMargin` for lazy visibility detection. |
+| `lazyThreshold` | `number` | `0.01` | IntersectionObserver `threshold` for lazy visibility detection. |
+| `onPause` | `() => void` | — | Fired when scrolling pauses. |
+| `onResume` | `() => void` | — | Fired when scrolling resumes after pause. |
+| `onScroll` | `(position: number) => void` | — | Fired on every position change with the current scroll position. |
+| `pauseOnInteraction` | `boolean` | `true` | Pause auto-scroll during user interaction. |
+| `resumeDelay` | `number` | `2000` | Milliseconds before auto-scroll resumes after interaction. |
+| `speed` | `number` | `0.5` | Auto-scroll speed in pixels per frame at 60fps. |
+| `wheelEnabled` | `boolean` | `true` | Enable mouse wheel scrolling. |
 
 ## License
 
