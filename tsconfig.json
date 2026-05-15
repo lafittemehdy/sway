@@ -21,7 +21,8 @@
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "ignoreDeprecations": "6.0"
   },
   "include": ["docs", "vite.config.ts", "react-sway/src"],
   "references": [{ "path": "./tsconfig.node.json" }]

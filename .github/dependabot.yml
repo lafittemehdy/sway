@@ -7,7 +7,7 @@ updates:
     labels:
       - "dependencies"
     groups:
-      minor-and-patch:
+      actions-minor-and-patch:
         update-types:
           - "minor"
           - "patch"
@@ -19,8 +19,9 @@ updates:
       interval: "weekly"
     labels:
       - "dependencies"
+    versioning-strategy: "increase"
     groups:
-      minor-and-patch:
+      npm-minor-and-patch:
         update-types:
           - "minor"
           - "patch"
@@ -32,8 +33,9 @@ updates:
       interval: "weekly"
     labels:
       - "dependencies"
+    versioning-strategy: "increase"
     groups:
-      minor-and-patch:
+      npm-minor-and-patch:
         update-types:
           - "minor"
           - "patch"

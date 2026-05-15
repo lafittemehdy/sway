@@ -1,6 +1,6 @@
 {
   "author": {
-    "name": "Mehdy Lafitte",
+    "name": "Lafitte Mehdy",
     "url": "https://github.com/lafittemehdy"
   },
   "bugs": {
@@ -14,13 +14,13 @@
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.4",
     "eslint-plugin-react": "^7.37.5",
-    "eslint-plugin-react-hooks": "^7.0.1",
-    "jsdom": "^29.0.1",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "jsdom": "^29.1.1",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "tsup": "^8.5.1",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.2"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   },
   "files": [
     "dist",
@@ -49,7 +49,8 @@
     "react-dom": ">=16.8.0"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "repository": {
     "type": "git",

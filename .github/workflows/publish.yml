@@ -15,16 +15,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            react-sway/package-lock.json
-          node-version: 24
+          node-version: 24.x
+          package-manager-cache: false
           registry-url: https://registry.npmjs.org
 
       - name: Upgrade npm (required for trusted publishing)
@@ -39,16 +36,20 @@ jobs:
         run: npm ci
 
       - name: Install react-sway dependencies
-        run: cd react-sway && npm ci
+        working-directory: react-sway
+        run: npm ci
 
       - name: Build react-sway
-        run: cd react-sway && npm run build
+        working-directory: react-sway
+        run: npm run build
 
       - name: Lint
         run: npm run lint
 
       - name: Test
-        run: cd react-sway && npm test
+        working-directory: react-sway
+        run: npm test
 
       - name: Publish with trusted publishing (OIDC)
-        run: cd react-sway && npm publish --provenance --access public
+        working-directory: react-sway
+        run: npm publish --access public
