@@ -15,7 +15,7 @@ It works by duplicating your content to create a seamless loop and uses CSS tran
 *   **User Friendly Interactions:**
     *   Click and drag to scroll.
     *   Swipe on touch devices.
-    *   Mouse wheel support with velocity capping.
+    *   Mouse wheel support with delta-mode normalization and velocity capping.
     *   Keyboard controls: Spacebar to pause/resume, ArrowUp/ArrowDown to scroll, Home/End to jump.
 *   **Responsive:** Adjusts to window resizing with debounced recalculation.
 *   **Lazy Visibility Detection:** Add a `content-item` class to your child elements, and `react-sway` automatically uses an IntersectionObserver to add a `.visible` class when they enter the viewport. Useful for triggering CSS animations or deferred rendering. Configurable via `lazy`, `lazyRootMargin`, and `lazyThreshold` props.

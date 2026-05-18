@@ -1,7 +1,7 @@
 /**
  * Behavioral and regression tests for ReactSway.
  */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ReactSway } from '../index';
@@ -276,6 +276,25 @@ describe('ReactSway', () => {
   });
 
   describe('wheel events', () => {
+    const expectMinimumScroll = async (onScroll: ReturnType<typeof vi.fn>, minimumDistance: number) => {
+      await waitFor(() => {
+        const positions = onScroll.mock.calls.map(([position]) => position as number);
+        expect(Math.min(...positions)).toBeLessThanOrEqual(-minimumDistance);
+      });
+    };
+
+    const renderWheelHarness = () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway autoScroll={false} friction={1} onScroll={onScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+
+      return { onScroll, swayContainer };
+    };
+
     it('applies wheel delta to velocity (fires onPause)', () => {
       const onPause = vi.fn();
       const { container } = render(
@@ -287,6 +306,52 @@ describe('ReactSway', () => {
       const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
       fireEvent.wheel(swayContainer, { deltaY: 100 });
       expect(onPause).toHaveBeenCalledOnce();
+    });
+
+    it('normalizes line-based wheel deltas before applying velocity', async () => {
+      const { onScroll, swayContainer } = renderWheelHarness();
+      fireEvent.wheel(swayContainer, { deltaMode: 1, deltaY: 3 });
+
+      await expectMinimumScroll(onScroll, 14);
+    });
+
+    it('normalizes page-based wheel deltas before applying velocity', async () => {
+      const { onScroll, swayContainer } = renderWheelHarness();
+      fireEvent.wheel(swayContainer, { deltaMode: 2, deltaY: 1 });
+
+      await expectMinimumScroll(onScroll, 100);
+    });
+
+    it('normalizes tiny pixel deltas from discrete wheel hardware', async () => {
+      const { onScroll, swayContainer } = renderWheelHarness();
+      const wheelEvent = new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        deltaMode: 0,
+        deltaY: 1,
+      });
+      Object.defineProperty(wheelEvent, 'wheelDelta', {
+        value: -120,
+      });
+      swayContainer.dispatchEvent(wheelEvent);
+
+      await expectMinimumScroll(onScroll, 10);
+    });
+
+    it('falls back to legacy wheel deltas when pixel delta is zero', async () => {
+      const { onScroll, swayContainer } = renderWheelHarness();
+      const wheelEvent = new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        deltaMode: 0,
+        deltaY: 0,
+      });
+      Object.defineProperty(wheelEvent, 'wheelDeltaY', {
+        value: -120,
+      });
+      swayContainer.dispatchEvent(wheelEvent);
+
+      await expectMinimumScroll(onScroll, 10);
     });
 
     it('caps velocity at MAX_VELOCITY', () => {

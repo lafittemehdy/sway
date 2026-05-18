@@ -36,8 +36,74 @@ const REDUCED_MOTION_SPEED_FACTOR = 0.25;
 /** Debounce delay in milliseconds for ResizeObserver callbacks. */
 const RESIZE_DEBOUNCE_MS = 150;
 
+/** Fallback pixel height for wheel events reported in line units. */
+const WHEEL_LINE_HEIGHT_FALLBACK_PX = 16;
+
+/** WheelEvent deltaMode value for line-based deltas. */
+const WHEEL_MODE_LINE = 1;
+
+/** WheelEvent deltaMode value for page-based deltas. */
+const WHEEL_MODE_PAGE = 2;
+
+/** Minimum pixel impulse for discrete wheel hardware reporting tiny pixel deltas. */
+const WHEEL_PIXEL_MIN_DELTA_PX = 48;
+
 /** Multiplier applied to wheel deltaY to convert to scroll velocity. */
-const WHEEL_VELOCITY_MULTIPLIER = 0.3;
+const WHEEL_VELOCITY_MULTIPLIER = 0.14;
+
+/** Small immediate wheel movement used to keep input responsive without jumping. */
+const WHEEL_IMMEDIATE_DELTA_FACTOR = 0.14;
+
+/** Legacy wheelDelta magnitude that usually represents one physical wheel notch. */
+const WHEEL_LEGACY_NOTCH_DELTA = 120;
+
+interface WheelEventWithLegacyDelta extends globalThis.WheelEvent {
+  wheelDelta?: number;
+  wheelDeltaY?: number;
+}
+
+function getLegacyWheelPixelDeltaY(event: globalThis.WheelEvent) {
+  const { wheelDelta, wheelDeltaY } = event as WheelEventWithLegacyDelta;
+  const legacyWheelDelta = typeof wheelDeltaY === 'number' ? wheelDeltaY : wheelDelta;
+
+  if (typeof legacyWheelDelta !== 'number' || !Number.isFinite(legacyWheelDelta)) {
+    return 0;
+  }
+
+  return -(legacyWheelDelta / WHEEL_LEGACY_NOTCH_DELTA) * WHEEL_PIXEL_MIN_DELTA_PX;
+}
+
+/**
+ * Converts wheel deltas to pixels so mouse wheels, touchpads, and page-wheel
+ * devices feed the same Sway velocity system.
+ */
+function normalizeWheelDeltaY(event: globalThis.WheelEvent, container: HTMLElement) {
+  if (event.deltaMode === WHEEL_MODE_LINE) {
+    const computedLineHeight = Number.parseFloat(window.getComputedStyle(container).lineHeight);
+    const lineHeight = Number.isFinite(computedLineHeight)
+      ? computedLineHeight
+      : WHEEL_LINE_HEIGHT_FALLBACK_PX;
+
+    return event.deltaY * lineHeight;
+  }
+
+  if (event.deltaMode === WHEEL_MODE_PAGE) {
+    const pageHeight = Math.max(container.clientHeight, window.innerHeight, 1);
+
+    return event.deltaY * pageHeight;
+  }
+
+  const legacyWheelPixelDeltaY = getLegacyWheelPixelDeltaY(event);
+
+  if (
+    Math.abs(event.deltaY) < WHEEL_PIXEL_MIN_DELTA_PX &&
+    Math.abs(legacyWheelPixelDeltaY) >= WHEEL_PIXEL_MIN_DELTA_PX
+  ) {
+    return legacyWheelPixelDeltaY;
+  }
+
+  return event.deltaY;
+}
 
 /**
  * Props for the ReactSway infinite scrolling component.
@@ -382,12 +448,19 @@ function ReactSway({
 
   const handleWheel = useCallback((e: globalThis.WheelEvent) => {
     if (!wheelEnabled) return;
+    const currentContainer = e.currentTarget instanceof HTMLElement ? e.currentTarget : containerRef.current;
+    if (!currentContainer) return;
+
     e.preventDefault();
-    velocityRef.current -= e.deltaY * WHEEL_VELOCITY_MULTIPLIER;
+    const normalizedDeltaY = normalizeWheelDeltaY(e, currentContainer);
+    const wheelDelta = -normalizedDeltaY;
+    const nextPosition = wrapPosition(positionRef.current + wheelDelta * WHEEL_IMMEDIATE_DELTA_FACTOR);
+    commitPosition(nextPosition);
+    velocityRef.current += wheelDelta * WHEEL_VELOCITY_MULTIPLIER;
     velocityRef.current = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, velocityRef.current));
     pauseAutoScroll();
     scheduleAutoScrollResume();
-  }, [pauseAutoScroll, scheduleAutoScrollResume, wheelEnabled]);
+  }, [commitPosition, pauseAutoScroll, scheduleAutoScrollResume, wheelEnabled, wrapPosition]);
 
   // Event listener registration
   useEffect(() => {

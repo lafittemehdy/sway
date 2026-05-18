@@ -17,7 +17,7 @@ Under the hood it duplicates your content with CSS transforms to keep things sea
 ### Features
 
 - Infinite looping scroll with configurable speed
-- Click-and-drag, swipe, mouse wheel, and keyboard controls (Space, ArrowUp/Down, Home/End)
+- Click-and-drag, swipe, normalized mouse wheel, and keyboard controls (Space, ArrowUp/Down, Home/End)
 - Pauses auto-scroll on user interaction
 - Responsive to window resizing
 - Visibility hook: add a `content-item` class and react-sway toggles a `.visible` class when elements enter the viewport
