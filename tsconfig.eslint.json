@@ -3,6 +3,7 @@
   "include": [
     "docs",
     "react-sway/src",
+    "react-sway/vite.config.ts",
     "react-sway/vitest.config.ts",
     "vite.config.ts"
   ],

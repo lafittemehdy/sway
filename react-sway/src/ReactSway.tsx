@@ -1,7 +1,13 @@
+/**
+ * Core ReactSway component implementing axis-aware infinite scrolling interactions.
+ */
 import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /** Velocity applied per arrow key press (pixels). */
 const ARROW_KEY_VELOCITY = 15;
+
+/** Default edge-hover activation thickness in pixels. */
+const DEFAULT_EDGE_HOVER_SIZE = 96;
 
 /** Default friction coefficient applied to velocity each frame. */
 const DEFAULT_FRICTION = 0.95;
@@ -19,7 +25,7 @@ const DEFAULT_RESUME_DELAY = 2000;
 const DEFAULT_SPEED = 0.5;
 
 /** Number of stacked content groups used to build the seamless loop. */
-const LOOP_SEGMENTS = 3;
+const MIN_LOOP_SEGMENTS = 3;
 
 /** Maximum deltaTime cap to prevent physics instability during frame drops. */
 const MAX_DELTA_TIME = 3;
@@ -57,10 +63,20 @@ const WHEEL_IMMEDIATE_DELTA_FACTOR = 0.14;
 /** Legacy wheelDelta magnitude that usually represents one physical wheel notch. */
 const WHEEL_LEGACY_NOTCH_DELTA = 120;
 
+/** Minimum touch movement before a gesture is classified by axis. */
+const TOUCH_AXIS_LOCK_THRESHOLD_PX = 8;
+
 interface WheelEventWithLegacyDelta extends globalThis.WheelEvent {
   wheelDelta?: number;
   wheelDeltaY?: number;
 }
+
+export type SwayAxis = 'horizontal' | 'vertical';
+export type SwayDirection = 'down' | 'left' | 'right' | 'up';
+export type SwayWheelMode = 'axis' | 'capture';
+
+type WheelDeltaAxis = 'x' | 'y';
+type TouchInteractionState = 'active' | 'idle' | 'ignored' | 'pending';
 
 function getLegacyWheelPixelDeltaY(event: globalThis.WheelEvent) {
   const { wheelDelta, wheelDeltaY } = event as WheelEventWithLegacyDelta;
@@ -77,49 +93,100 @@ function getLegacyWheelPixelDeltaY(event: globalThis.WheelEvent) {
  * Converts wheel deltas to pixels so mouse wheels, touchpads, and page-wheel
  * devices feed the same Sway velocity system.
  */
-function normalizeWheelDeltaY(event: globalThis.WheelEvent, container: HTMLElement) {
+function normalizeWheelDelta(event: globalThis.WheelEvent, container: HTMLElement, axis: WheelDeltaAxis) {
+  const rawDelta = axis === 'x' ? event.deltaX : event.deltaY;
+
   if (event.deltaMode === WHEEL_MODE_LINE) {
     const computedLineHeight = Number.parseFloat(window.getComputedStyle(container).lineHeight);
     const lineHeight = Number.isFinite(computedLineHeight)
       ? computedLineHeight
       : WHEEL_LINE_HEIGHT_FALLBACK_PX;
 
-    return event.deltaY * lineHeight;
+    return rawDelta * lineHeight;
   }
 
   if (event.deltaMode === WHEEL_MODE_PAGE) {
-    const pageHeight = Math.max(container.clientHeight, window.innerHeight, 1);
+    const pageSize = axis === 'x'
+      ? Math.max(container.clientWidth, window.innerWidth, 1)
+      : Math.max(container.clientHeight, window.innerHeight, 1);
 
-    return event.deltaY * pageHeight;
+    return rawDelta * pageSize;
   }
+
+  if (axis === 'x') return rawDelta;
 
   const legacyWheelPixelDeltaY = getLegacyWheelPixelDeltaY(event);
 
   if (
-    Math.abs(event.deltaY) < WHEEL_PIXEL_MIN_DELTA_PX &&
+    Math.abs(rawDelta) < WHEEL_PIXEL_MIN_DELTA_PX &&
     Math.abs(legacyWheelPixelDeltaY) >= WHEEL_PIXEL_MIN_DELTA_PX
   ) {
     return legacyWheelPixelDeltaY;
   }
 
-  return event.deltaY;
+  return rawDelta;
+}
+
+function getOwnedWheelDelta(
+  event: globalThis.WheelEvent,
+  container: HTMLElement,
+  isHorizontal: boolean,
+  wheelMode: SwayWheelMode,
+) {
+  // The ownership function is intentionally partial: null means native scroll
+  // chaining remains the browser's responsibility for cross-axis gestures.
+  const deltaX = normalizeWheelDelta(event, container, 'x');
+  const deltaY = normalizeWheelDelta(event, container, 'y');
+  const absDeltaX = Math.abs(deltaX);
+  const absDeltaY = Math.abs(deltaY);
+
+  if (isHorizontal) {
+    if (wheelMode === 'axis' && absDeltaX <= absDeltaY && !event.shiftKey) return null;
+    return absDeltaX > absDeltaY ? deltaX : deltaY;
+  }
+
+  if (wheelMode === 'axis' && absDeltaX > absDeltaY) return null;
+  return deltaY;
+}
+
+function getVisibleEdgeInterval(rect: DOMRect, isHorizontal: boolean) {
+  const rectEnd = isHorizontal ? rect.right : rect.bottom;
+  const rectStart = isHorizontal ? rect.left : rect.top;
+  const viewportEnd = isHorizontal ? window.innerWidth : window.innerHeight;
+
+  const end = Math.min(rectEnd, viewportEnd);
+  const start = Math.max(rectStart, 0);
+
+  if (end <= start) return null;
+
+  return {
+    end,
+    size: end - start,
+    start,
+  };
 }
 
 /**
  * Props for the ReactSway infinite scrolling component.
  */
 export interface ReactSwayProps {
+  /** Scroll axis. Horizontal directions imply `horizontal` when omitted. @default 'vertical' */
+  axis?: SwayAxis;
   /** Enable/disable auto-scrolling. @default true */
   autoScroll?: boolean;
   /** Content elements to render in the infinite scroll container. */
   children: ReactNode;
   /** Auto-scroll direction. @default 'up' */
-  direction?: 'down' | 'up';
+  direction?: SwayDirection;
   /** Enable mouse/touch drag interaction. @default true */
   draggable?: boolean;
+  /** Only auto-scroll while the pointer hovers an axis boundary. @default false */
+  edgeHoverScroll?: boolean;
+  /** Edge-hover activation thickness in pixels. @default 96 */
+  edgeHoverSize?: number;
   /** Momentum decay coefficient (0-1, lower = more friction). @default 0.95 */
   friction?: number;
-  /** Enable keyboard controls (Space, ArrowUp/Down, Home/End). @default true */
+  /** Enable keyboard controls (Space, Arrow keys, Home/End). @default true */
   keyboard?: boolean;
   /** Enable lazy visibility detection via IntersectionObserver. @default true */
   lazy?: boolean;
@@ -141,13 +208,24 @@ export interface ReactSwayProps {
   speed?: number;
   /** Enable mouse wheel scrolling. @default true */
   wheelEnabled?: boolean;
+  /**
+   * Defines which wheel gestures ReactSway may cancel.
+   *
+   * `axis` only consumes wheel gestures aligned with the Sway axis, letting
+   * cross-axis page scroll pass through. `capture` preserves legacy behavior
+   * by consuming every wheel event that reaches the component.
+   *
+   * @default 'axis'
+   */
+  wheelMode?: SwayWheelMode;
 }
 
 /**
  * A smooth, infinite scrolling container component.
  *
  * Renders children in a continuously looping scroll area with support for
- * auto-scrolling, mouse drag, touch swipe, wheel, and keyboard interactions.
+ * auto-scrolling, mouse drag, touch swipe, wheel, keyboard interactions,
+ * and optional edge-hover scrolling.
  * Content is duplicated to create a seamless loop effect. Duplicate content
  * is wrapped in `<aside>` elements with `aria-hidden="true"` for accessibility.
  *
@@ -163,10 +241,13 @@ export interface ReactSwayProps {
  * ```
  */
 function ReactSway({
+  axis,
   autoScroll = true,
   children,
   direction = 'up',
   draggable = true,
+  edgeHoverScroll = false,
+  edgeHoverSize = DEFAULT_EDGE_HOVER_SIZE,
   friction = DEFAULT_FRICTION,
   keyboard = true,
   lazy = true,
@@ -179,7 +260,17 @@ function ReactSway({
   resumeDelay = DEFAULT_RESUME_DELAY,
   speed = DEFAULT_SPEED,
   wheelEnabled = true,
+  wheelMode = 'axis',
 }: ReactSwayProps) {
+  const scrollAxis = useMemo<SwayAxis>(
+    () => axis ?? (direction === 'left' || direction === 'right' ? 'horizontal' : 'vertical'),
+    [axis, direction],
+  );
+  const isHorizontal = scrollAxis === 'horizontal';
+  const normalizedEdgeHoverSize = useMemo(
+    () => (Number.isFinite(edgeHoverSize) ? Math.max(1, edgeHoverSize) : DEFAULT_EDGE_HOVER_SIZE),
+    [edgeHoverSize],
+  );
   const normalizedFriction = useMemo(
     () => (Number.isFinite(friction) ? Math.min(Math.max(friction, 0), 1) : DEFAULT_FRICTION),
     [friction],
@@ -192,11 +283,19 @@ function ReactSway({
     () => (Number.isFinite(speed) ? Math.max(0, speed) : DEFAULT_SPEED),
     [speed],
   );
+  const touchAction = useMemo(() => {
+    if (!draggable) return 'auto';
+    return isHorizontal ? 'pan-y' : 'pan-x';
+  }, [draggable, isHorizontal]);
+  // Containment is sound only when ReactSway owns every wheel event it receives;
+  // otherwise cross-axis and disabled-wheel page scroll must remain chainable.
+  const overscrollBehavior = wheelEnabled && wheelMode === 'capture' ? 'contain' : 'auto';
 
   const [isDragging, setIsDragging] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isTabActive, setIsTabActive] = useState(true);
   const [loopPoint, setLoopPoint] = useState(0);
+  const [loopSegmentCount, setLoopSegmentCount] = useState(MIN_LOOP_SEGMENTS);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
     if (typeof window === 'undefined') return false;
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -209,14 +308,21 @@ function ReactSway({
   const isDraggingRef = useRef(false);
   const isPausedRef = useRef(false);
   const lastFrameTimeRef = useRef(0);
+  const lastMouseXRef = useRef(0);
   const lastMouseYRef = useRef(0);
+  const lastTouchXRef = useRef(0);
   const lastTouchYRef = useRef(0);
   const loopPointRef = useRef(0);
+  const edgeHoverDirectionRef = useRef(0);
   const onPauseRef = useRef(onPause);
   const onResumeRef = useRef(onResume);
   const onScrollRef = useRef(onScroll);
+  const originalGroupRef = useRef<HTMLDivElement>(null);
   const positionRef = useRef(0);
   const resizeDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchInteractionStateRef = useRef<TouchInteractionState>('idle');
+  const touchStartXRef = useRef(0);
+  const touchStartYRef = useRef(0);
   const velocityRef = useRef(0);
 
   // Keep callback refs in sync without triggering re-renders
@@ -252,8 +358,10 @@ function ReactSway({
     if (visualPosition > 0 && currentLoopPoint > 0) {
       visualPosition -= currentLoopPoint;
     }
-    containerRef.current.style.transform = `translate3d(0, ${visualPosition}px, 0)`;
-  }, []);
+    containerRef.current.style.transform = isHorizontal
+      ? `translate3d(${visualPosition}px, 0, 0)`
+      : `translate3d(0, ${visualPosition}px, 0)`;
+  }, [isHorizontal]);
 
   const commitPosition = useCallback((nextPosition: number) => {
     if (positionRef.current === nextPosition) return;
@@ -277,15 +385,26 @@ function ReactSway({
   }, []);
 
   const recalculateLoopPoint = useCallback(() => {
-    if (!containerRef.current) return;
-    const currentContentHeight = containerRef.current.scrollHeight;
-    if (currentContentHeight <= 0) return;
+    if (!containerRef.current || !originalGroupRef.current) return;
+    const originalContentSize = isHorizontal
+      ? originalGroupRef.current.scrollWidth
+      : originalGroupRef.current.scrollHeight;
+    if (originalContentSize <= 0) return;
 
-    const nextLoopPoint = currentContentHeight / LOOP_SEGMENTS;
+    const viewport = containerRef.current.parentElement ?? containerRef.current;
+    const viewportSize = isHorizontal
+      ? Math.max(viewport.clientWidth, 1)
+      : Math.max(viewport.clientHeight, 1);
+    const nextLoopSegmentCount = Math.max(MIN_LOOP_SEGMENTS, Math.ceil(viewportSize / originalContentSize) + 2);
+    const nextLoopPoint = originalContentSize;
+
+    setLoopSegmentCount((previousLoopSegmentCount) =>
+      previousLoopSegmentCount === nextLoopSegmentCount ? previousLoopSegmentCount : nextLoopSegmentCount
+    );
     loopPointRef.current = nextLoopPoint;
     setLoopPoint((previousLoopPoint) => (Math.abs(previousLoopPoint - nextLoopPoint) < 0.5 ? previousLoopPoint : nextLoopPoint));
     renderPosition(positionRef.current);
-  }, [renderPosition]);
+  }, [isHorizontal, renderPosition]);
 
   // Sync autoScroll prop changes with internal state
   useEffect(() => {
@@ -357,14 +476,30 @@ function ReactSway({
         togglePause();
         break;
       case 'ArrowDown':
+        if (isHorizontal) break;
         e.preventDefault();
         velocityRef.current -= ARROW_KEY_VELOCITY;
         pauseAutoScroll();
         scheduleAutoScrollResume();
         break;
       case 'ArrowUp':
+        if (isHorizontal) break;
         e.preventDefault();
         velocityRef.current += ARROW_KEY_VELOCITY;
+        pauseAutoScroll();
+        scheduleAutoScrollResume();
+        break;
+      case 'ArrowLeft':
+        if (!isHorizontal) break;
+        e.preventDefault();
+        velocityRef.current += ARROW_KEY_VELOCITY;
+        pauseAutoScroll();
+        scheduleAutoScrollResume();
+        break;
+      case 'ArrowRight':
+        if (!isHorizontal) break;
+        e.preventDefault();
+        velocityRef.current -= ARROW_KEY_VELOCITY;
         pauseAutoScroll();
         scheduleAutoScrollResume();
         break;
@@ -387,7 +522,7 @@ function ReactSway({
       default:
         break;
     }
-  }, [commitPosition, keyboard, pauseAutoScroll, scheduleAutoScrollResume, togglePause]);
+  }, [commitPosition, isHorizontal, keyboard, pauseAutoScroll, scheduleAutoScrollResume, togglePause]);
 
   const handleMouseDown = useCallback((e: globalThis.MouseEvent) => {
     if (!draggable) return;
@@ -395,6 +530,7 @@ function ReactSway({
     containerRef.current?.focus();
     setIsDragging(true);
     isDraggingRef.current = true;
+    lastMouseXRef.current = e.clientX;
     lastMouseYRef.current = e.clientY;
     velocityRef.current = 0;
     pauseAutoScroll();
@@ -403,12 +539,13 @@ function ReactSway({
   const handleMouseMove = useCallback((e: globalThis.MouseEvent) => {
     if (!isDraggingRef.current) return;
     e.preventDefault();
-    const deltaY = e.clientY - lastMouseYRef.current;
-    const nextPosition = wrapPosition(positionRef.current + deltaY);
+    const delta = isHorizontal ? e.clientX - lastMouseXRef.current : e.clientY - lastMouseYRef.current;
+    const nextPosition = wrapPosition(positionRef.current + delta);
     commitPosition(nextPosition);
-    velocityRef.current = deltaY;
+    velocityRef.current = delta;
+    lastMouseXRef.current = e.clientX;
     lastMouseYRef.current = e.clientY;
-  }, [commitPosition, wrapPosition]);
+  }, [commitPosition, isHorizontal, wrapPosition]);
 
   const handleMouseUp = useCallback((e: globalThis.MouseEvent) => {
     if (!isDraggingRef.current) return;
@@ -419,48 +556,113 @@ function ReactSway({
   }, [scheduleAutoScrollResume]);
 
   const handleTouchEnd = useCallback((_e: globalThis.TouchEvent) => {
-    if (!isDraggingRef.current) return;
-    setIsDragging(false);
-    isDraggingRef.current = false;
-    scheduleAutoScrollResume();
+    const wasActive = touchInteractionStateRef.current === 'active';
+
+    touchInteractionStateRef.current = 'idle';
+    if (isDraggingRef.current) {
+      setIsDragging(false);
+      isDraggingRef.current = false;
+    }
+
+    if (wasActive) {
+      scheduleAutoScrollResume();
+    }
   }, [scheduleAutoScrollResume]);
 
   const handleTouchMove = useCallback((e: globalThis.TouchEvent) => {
-    if (!isDraggingRef.current || e.touches.length !== 1) return;
-    e.preventDefault();
+    if (touchInteractionStateRef.current === 'idle' || touchInteractionStateRef.current === 'ignored') return;
+    if (e.touches.length !== 1) return;
+
     const touch = e.touches[0];
-    const deltaY = touch.clientY - lastTouchYRef.current;
-    const nextPosition = wrapPosition(positionRef.current + deltaY);
+
+    if (touchInteractionStateRef.current === 'pending') {
+      const totalDeltaX = touch.clientX - touchStartXRef.current;
+      const totalDeltaY = touch.clientY - touchStartYRef.current;
+      const primaryDelta = isHorizontal ? Math.abs(totalDeltaX) : Math.abs(totalDeltaY);
+      const crossDelta = isHorizontal ? Math.abs(totalDeltaY) : Math.abs(totalDeltaX);
+
+      if (Math.max(primaryDelta, crossDelta) < TOUCH_AXIS_LOCK_THRESHOLD_PX) return;
+
+      if (crossDelta > primaryDelta) {
+        touchInteractionStateRef.current = 'ignored';
+        return;
+      }
+
+      touchInteractionStateRef.current = 'active';
+      setIsDragging(true);
+      isDraggingRef.current = true;
+      pauseAutoScroll();
+    }
+
+    e.preventDefault();
+    const delta = isHorizontal ? touch.clientX - lastTouchXRef.current : touch.clientY - lastTouchYRef.current;
+    const nextPosition = wrapPosition(positionRef.current + delta);
     commitPosition(nextPosition);
-    velocityRef.current = deltaY;
+    velocityRef.current = delta;
+    lastTouchXRef.current = touch.clientX;
     lastTouchYRef.current = touch.clientY;
-  }, [commitPosition, wrapPosition]);
+  }, [commitPosition, isHorizontal, pauseAutoScroll, wrapPosition]);
 
   const handleTouchStart = useCallback((e: globalThis.TouchEvent) => {
     if (!draggable || e.touches.length !== 1) return;
     containerRef.current?.focus();
-    setIsDragging(true);
-    isDraggingRef.current = true;
+    touchInteractionStateRef.current = 'pending';
+    lastTouchXRef.current = e.touches[0].clientX;
     lastTouchYRef.current = e.touches[0].clientY;
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
     velocityRef.current = 0;
-    pauseAutoScroll();
-  }, [draggable, pauseAutoScroll]);
+  }, [draggable]);
 
   const handleWheel = useCallback((e: globalThis.WheelEvent) => {
     if (!wheelEnabled) return;
     const currentContainer = e.currentTarget instanceof HTMLElement ? e.currentTarget : containerRef.current;
     if (!currentContainer) return;
 
+    const ownedDelta = getOwnedWheelDelta(e, currentContainer, isHorizontal, wheelMode);
+    if (ownedDelta === null) return;
+
     e.preventDefault();
-    const normalizedDeltaY = normalizeWheelDeltaY(e, currentContainer);
-    const wheelDelta = -normalizedDeltaY;
+    const wheelDelta = -ownedDelta;
     const nextPosition = wrapPosition(positionRef.current + wheelDelta * WHEEL_IMMEDIATE_DELTA_FACTOR);
     commitPosition(nextPosition);
     velocityRef.current += wheelDelta * WHEEL_VELOCITY_MULTIPLIER;
     velocityRef.current = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, velocityRef.current));
     pauseAutoScroll();
     scheduleAutoScrollResume();
-  }, [commitPosition, pauseAutoScroll, scheduleAutoScrollResume, wheelEnabled, wrapPosition]);
+  }, [commitPosition, isHorizontal, pauseAutoScroll, scheduleAutoScrollResume, wheelEnabled, wheelMode, wrapPosition]);
+
+  const handleEdgeHoverMove = useCallback((e: globalThis.MouseEvent) => {
+    if (!edgeHoverScroll) return;
+    const viewport = containerRef.current?.parentElement ?? containerRef.current;
+    if (!viewport) return;
+
+    const rect = viewport.getBoundingClientRect();
+    const visibleInterval = getVisibleEdgeInterval(rect, isHorizontal);
+    if (!visibleInterval) {
+      edgeHoverDirectionRef.current = 0;
+      return;
+    }
+
+    const pointerPosition = isHorizontal ? e.clientX : e.clientY;
+    const effectiveEdgeHoverSize = Math.min(normalizedEdgeHoverSize, visibleInterval.size / 2);
+
+    if (pointerPosition <= visibleInterval.start + effectiveEdgeHoverSize) {
+      edgeHoverDirectionRef.current = 1;
+      return;
+    }
+
+    if (pointerPosition >= visibleInterval.end - effectiveEdgeHoverSize) {
+      edgeHoverDirectionRef.current = -1;
+      return;
+    }
+
+    edgeHoverDirectionRef.current = 0;
+  }, [edgeHoverScroll, isHorizontal, normalizedEdgeHoverSize]);
+
+  const handleEdgeHoverLeave = useCallback(() => {
+    edgeHoverDirectionRef.current = 0;
+  }, []);
 
   // Event listener registration
   useEffect(() => {
@@ -470,21 +672,34 @@ function ReactSway({
     currentContainer.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
-    currentContainer.addEventListener('touchstart', handleTouchStart, { passive: true });
-    window.addEventListener('touchmove', handleTouchMove, { passive: false });
-    window.addEventListener('touchend', handleTouchEnd, { passive: true });
-    currentContainer.addEventListener('wheel', handleWheel, { passive: false });
+    if (draggable) {
+      currentContainer.addEventListener('touchstart', handleTouchStart, { passive: true });
+      window.addEventListener('touchmove', handleTouchMove, { passive: false });
+      window.addEventListener('touchend', handleTouchEnd, { passive: true });
+    }
+    if (wheelEnabled) {
+      currentContainer.addEventListener('wheel', handleWheel, { passive: false });
+    }
+    const edgeHoverTarget = currentContainer.parentElement ?? currentContainer;
+    edgeHoverTarget.addEventListener('mousemove', handleEdgeHoverMove);
+    edgeHoverTarget.addEventListener('mouseleave', handleEdgeHoverLeave);
 
     return () => {
       currentContainer.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
-      currentContainer.removeEventListener('touchstart', handleTouchStart);
-      window.removeEventListener('touchmove', handleTouchMove);
-      window.removeEventListener('touchend', handleTouchEnd);
-      currentContainer.removeEventListener('wheel', handleWheel);
+      if (draggable) {
+        currentContainer.removeEventListener('touchstart', handleTouchStart);
+        window.removeEventListener('touchmove', handleTouchMove);
+        window.removeEventListener('touchend', handleTouchEnd);
+      }
+      if (wheelEnabled) {
+        currentContainer.removeEventListener('wheel', handleWheel);
+      }
+      edgeHoverTarget.removeEventListener('mousemove', handleEdgeHoverMove);
+      edgeHoverTarget.removeEventListener('mouseleave', handleEdgeHoverLeave);
     };
-  }, [handleMouseDown, handleMouseMove, handleMouseUp, handleTouchEnd, handleTouchMove, handleTouchStart, handleWheel]);
+  }, [draggable, handleEdgeHoverLeave, handleEdgeHoverMove, handleMouseDown, handleMouseMove, handleMouseUp, handleTouchEnd, handleTouchMove, handleTouchStart, handleWheel, wheelEnabled]);
 
   // Debounced resize handler shared by ResizeObserver and window resize fallback
   const debouncedRecalculate = useCallback(() => {
@@ -565,7 +780,7 @@ function ReactSway({
     // Reset so the first frame uses deltaTime=1 instead of a stale timestamp
     lastFrameTimeRef.current = 0;
 
-    const directionMultiplier = direction === 'down' ? 1 : -1;
+    const directionMultiplier = direction === 'down' || direction === 'right' ? 1 : -1;
 
     const animate = (currentTime: number) => {
       let deltaTime = lastFrameTimeRef.current
@@ -590,9 +805,16 @@ function ReactSway({
         ? normalizedSpeed * REDUCED_MOTION_SPEED_FACTOR
         : normalizedSpeed;
 
+      const edgeHoverMultiplier = edgeHoverScroll ? edgeHoverDirectionRef.current : directionMultiplier;
+
       // Auto-scroll when enabled and not dragging
-      if (autoScrollRef.current.desired && autoScrollRef.current.active && !isDraggingRef.current) {
-        nextPosition += directionMultiplier * effectiveSpeed * deltaTime;
+      if (
+        autoScrollRef.current.desired &&
+        autoScrollRef.current.active &&
+        !isDraggingRef.current &&
+        (!edgeHoverScroll || edgeHoverMultiplier !== 0)
+      ) {
+        nextPosition += edgeHoverMultiplier * effectiveSpeed * deltaTime;
       }
 
       // Apply velocity momentum from user interaction
@@ -613,7 +835,7 @@ function ReactSway({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [commitPosition, direction, isPaused, isTabActive, normalizedFriction, normalizedSpeed, prefersReducedMotion, wrapPosition]);
+  }, [commitPosition, direction, edgeHoverScroll, isHorizontal, isPaused, isTabActive, normalizedFriction, normalizedSpeed, prefersReducedMotion, wrapPosition]);
 
   // Intersection Observer for lazy visibility detection
   useEffect(() => {
@@ -649,32 +871,42 @@ function ReactSway({
       ref={containerRef}
       style={{
         cursor: draggable ? (isDragging ? 'grabbing' : 'grab') : 'default',
+        display: isHorizontal ? 'flex' : undefined,
+        flexDirection: isHorizontal ? 'row' : undefined,
+        height: isHorizontal ? '100%' : 'max-content',
         MozUserSelect: 'none',
         msUserSelect: 'none',
+        minHeight: isHorizontal ? undefined : '100%',
         overflow: 'hidden',
-        overscrollBehavior: 'contain',
+        overscrollBehavior,
         pointerEvents: 'auto',
         position: 'absolute',
-        touchAction: 'none',
-        transform: 'translate3d(0, 0px, 0)',
+        touchAction,
+        transform: 'translate3d(0, 0, 0)',
         userSelect: 'none',
         WebkitUserSelect: 'none',
-        width: '100%',
+        width: isHorizontal ? 'max-content' : '100%',
         willChange: 'transform',
         zIndex: 1,
       }}
       onKeyDown={keyboard ? handleKeyDown : undefined}
       tabIndex={keyboard ? 0 : undefined}
     >
-      <div className="content-group original">
+      <div className="content-group original" ref={originalGroupRef} style={isHorizontal ? { display: 'flex', flex: '0 0 auto' } : undefined}>
         {children}
       </div>
-      <aside aria-hidden="true" className="content-group duplicate" data-duplicate="true" role="presentation">
-        {children}
-      </aside>
-      <aside aria-hidden="true" className="content-group duplicate" data-duplicate="true" role="presentation">
-        {children}
-      </aside>
+      {Array.from({ length: loopSegmentCount - 1 }, (_, duplicateIndex) => (
+        <aside
+          aria-hidden="true"
+          className="content-group duplicate"
+          data-duplicate="true"
+          key={`duplicate-${duplicateIndex}`}
+          role="presentation"
+          style={isHorizontal ? { display: 'flex', flex: '0 0 auto' } : undefined}
+        >
+          {children}
+        </aside>
+      ))}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 /**
  * Behavioral and regression tests for ReactSway.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ReactSway } from '../index';
@@ -82,6 +82,35 @@ describe('ReactSway', () => {
       });
     });
 
+    it('adds enough duplicate groups when original content is shorter than the viewport', async () => {
+      const { container } = render(
+        <ReactSway>
+          <div>Short content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const originalGroup = container.querySelector('.content-group.original') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+
+      Object.defineProperty(originalGroup, 'scrollHeight', {
+        configurable: true,
+        value: 100,
+      });
+      Object.defineProperty(viewport, 'clientHeight', {
+        configurable: true,
+        value: 420,
+      });
+
+      act(() => {
+        mockResizeCallback?.();
+      });
+
+      await waitFor(() => {
+        expect(container.querySelectorAll('.content-group')).toHaveLength(7);
+      });
+    });
+
     it('renders original content group as div', () => {
       const { container } = render(
         <ReactSway>
@@ -103,6 +132,78 @@ describe('ReactSway', () => {
 
       const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
       expect(swayContainer.style.transform).toContain('translate3d');
+    });
+
+    it('renders horizontal layout when axis is horizontal', () => {
+      const { container } = render(
+        <ReactSway axis="horizontal">
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      expect(swayContainer.style.display).toBe('flex');
+      expect(swayContainer.style.height).toBe('100%');
+      expect(swayContainer.style.width).toBe('max-content');
+      expect(swayContainer.style.touchAction).toBe('pan-y');
+    });
+
+    it('sizes vertical layout by content height so translated tracks cannot expose empty space', () => {
+      const { container } = render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      expect(swayContainer.style.height).toBe('max-content');
+      expect(swayContainer.style.minHeight).toBe('100%');
+      expect(swayContainer.style.touchAction).toBe('pan-x');
+      expect(swayContainer.style.width).toBe('100%');
+    });
+
+    it('leaves native touch handling available when drag is disabled', () => {
+      const { container } = render(
+        <ReactSway draggable={false}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      expect(swayContainer.style.touchAction).toBe('auto');
+    });
+
+    it('allows native scroll chaining outside full wheel capture mode', () => {
+      const { container } = render(
+        <ReactSway wheelMode="axis">
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      expect(swayContainer.style.overscrollBehavior).toBe('auto');
+    });
+
+    it('contains native overscroll only when wheel capture is explicit', () => {
+      const { container } = render(
+        <ReactSway wheelMode="capture">
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      expect(swayContainer.style.overscrollBehavior).toBe('contain');
+    });
+
+    it('allows native scroll chaining when wheel handling is disabled', () => {
+      const { container } = render(
+        <ReactSway wheelEnabled={false} wheelMode="capture">
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      expect(swayContainer.style.overscrollBehavior).toBe('auto');
     });
   });
 
@@ -276,6 +377,17 @@ describe('ReactSway', () => {
   });
 
   describe('wheel events', () => {
+    const dispatchCancelableWheel = (element: HTMLElement, init: WheelEventInit) => {
+      const wheelEvent = new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+
+      const propagated = element.dispatchEvent(wheelEvent);
+      return { propagated, wheelEvent };
+    };
+
     const expectMinimumScroll = async (onScroll: ReturnType<typeof vi.fn>, minimumDistance: number) => {
       await waitFor(() => {
         const positions = onScroll.mock.calls.map(([position]) => position as number);
@@ -305,6 +417,70 @@ describe('ReactSway', () => {
 
       const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
       fireEvent.wheel(swayContainer, { deltaY: 100 });
+      expect(onPause).toHaveBeenCalledOnce();
+    });
+
+    it('lets vertical wheel intent pass through horizontal Sway in axis mode', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway axis="horizontal" onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const { propagated, wheelEvent } = dispatchCancelableWheel(swayContainer, { deltaY: 100 });
+
+      expect(propagated).toBe(true);
+      expect(wheelEvent.defaultPrevented).toBe(false);
+      expect(onPause).not.toHaveBeenCalled();
+    });
+
+    it('consumes horizontal wheel intent in horizontal axis mode', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway axis="horizontal" onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const { propagated, wheelEvent } = dispatchCancelableWheel(swayContainer, { deltaX: 100, deltaY: 12 });
+
+      expect(propagated).toBe(false);
+      expect(wheelEvent.defaultPrevented).toBe(true);
+      expect(onPause).toHaveBeenCalledOnce();
+    });
+
+    it('treats shift wheel as horizontal intent in horizontal axis mode', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway axis="horizontal" onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const { propagated, wheelEvent } = dispatchCancelableWheel(swayContainer, { deltaY: 100, shiftKey: true });
+
+      expect(propagated).toBe(false);
+      expect(wheelEvent.defaultPrevented).toBe(true);
+      expect(onPause).toHaveBeenCalledOnce();
+    });
+
+    it('captures vertical wheel intent for horizontal Sway when wheelMode is capture', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway axis="horizontal" onPause={onPause} wheelMode="capture">
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const { propagated, wheelEvent } = dispatchCancelableWheel(swayContainer, { deltaY: 100 });
+
+      expect(propagated).toBe(false);
+      expect(wheelEvent.defaultPrevented).toBe(true);
       expect(onPause).toHaveBeenCalledOnce();
     });
 
@@ -389,6 +565,19 @@ describe('ReactSway', () => {
   });
 
   describe('touch interactions', () => {
+    const createTouchEvent = (
+      type: string,
+      touch: { clientX: number; clientY: number } | null,
+    ) => {
+      const touchEvent = new Event(type, { bubbles: true, cancelable: true }) as Event & {
+        touches: ArrayLike<{ clientX: number; clientY: number }>;
+      };
+      Object.defineProperty(touchEvent, 'touches', {
+        value: touch ? { 0: touch, length: 1 } : { length: 0 },
+      });
+      return touchEvent;
+    };
+
     it('rejects multi-touch gestures on start', () => {
       const onPause = vi.fn();
       const { container } = render(
@@ -408,6 +597,40 @@ describe('ReactSway', () => {
 
       // onPause should not fire because multi-touch is rejected
       expect(onPause).not.toHaveBeenCalled();
+    });
+
+    it('lets vertical touch pan pass through horizontal Sway', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway axis="horizontal" onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      swayContainer.dispatchEvent(createTouchEvent('touchstart', { clientX: 0, clientY: 0 }));
+      const touchMoveEvent = createTouchEvent('touchmove', { clientX: 1, clientY: 24 });
+      window.dispatchEvent(touchMoveEvent);
+
+      expect(touchMoveEvent.defaultPrevented).toBe(false);
+      expect(onPause).not.toHaveBeenCalled();
+    });
+
+    it('captures horizontal touch pan for horizontal Sway after axis lock', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway axis="horizontal" onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      swayContainer.dispatchEvent(createTouchEvent('touchstart', { clientX: 0, clientY: 0 }));
+      const touchMoveEvent = createTouchEvent('touchmove', { clientX: 24, clientY: 1 });
+      window.dispatchEvent(touchMoveEvent);
+
+      expect(touchMoveEvent.defaultPrevented).toBe(true);
+      expect(onPause).toHaveBeenCalledOnce();
     });
   });
 
@@ -514,6 +737,143 @@ describe('ReactSway', () => {
           </ReactSway>
         );
       }).not.toThrow();
+    });
+
+    it('accepts horizontal directions', () => {
+      expect(() => {
+        render(
+          <ReactSway direction="left">
+            <div>Content</div>
+          </ReactSway>
+        );
+      }).not.toThrow();
+
+      expect(() => {
+        render(
+          <ReactSway direction="right">
+            <div>Content</div>
+          </ReactSway>
+        );
+      }).not.toThrow();
+    });
+  });
+
+  describe('edgeHoverScroll prop', () => {
+    const waitForAnimationFrames = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+    type ViewportRect = Pick<DOMRect, 'bottom' | 'height' | 'left' | 'right' | 'top' | 'width' | 'x' | 'y'>;
+
+    const setViewportRect = (element: HTMLElement, overrides: Partial<ViewportRect> = {}) => {
+      const rect = {
+        bottom: 300,
+        height: 300,
+        left: 0,
+        right: 300,
+        top: 0,
+        width: 300,
+        x: 0,
+        y: 0,
+        ...overrides,
+      };
+
+      Object.defineProperty(element, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect,
+      });
+    };
+
+    it('keeps edge-hover auto-scroll idle away from boundaries', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway draggable={false} edgeHoverScroll edgeHoverSize={40} onScroll={onScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      fireEvent.mouseMove(viewport, { clientY: 150 });
+      await waitForAnimationFrames();
+
+      expect(onScroll).not.toHaveBeenCalled();
+    });
+
+    it('scrolls vertical content from top and bottom edge hover zones', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway draggable={false} edgeHoverScroll edgeHoverSize={40} onScroll={onScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      fireEvent.mouseMove(viewport, { clientY: 10 });
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) > 0)).toBe(true);
+      });
+
+      onScroll.mockClear();
+      fireEvent.mouseMove(viewport, { clientY: 290 });
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) < 0)).toBe(true);
+      });
+    });
+
+    it('uses the visible viewport bottom when a vertical edge-hover stage extends below the fold', async () => {
+      vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(300);
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway draggable={false} edgeHoverScroll edgeHoverSize={40} onScroll={onScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport, {
+        bottom: 800,
+        height: 800,
+        top: 0,
+      });
+
+      fireEvent.mouseMove(viewport, { clientY: 290 });
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) < 0)).toBe(true);
+      });
+    });
+
+    it('scrolls horizontal content from left and right edge hover zones', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway axis="horizontal" draggable={false} edgeHoverScroll edgeHoverSize={40} onScroll={onScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      fireEvent.mouseMove(viewport, { clientX: 10 });
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) > 0)).toBe(true);
+      });
+
+      onScroll.mockClear();
+      fireEvent.mouseMove(viewport, { clientX: 290 });
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) < 0)).toBe(true);
+      });
     });
   });
 

@@ -10,14 +10,15 @@ A monorepo for [`react-sway`](https://www.npmjs.com/package/react-sway) and its 
 
 ## What is react-sway?
 
-A React component that turns a list of items into a smooth, infinitely scrolling loop. It auto-scrolls, pauses when users interact, and works with touch, mouse, wheel, and keyboard out of the box.
+A React component that turns a list of items into a smooth, infinitely scrolling loop. It supports vertical and horizontal scrolling, auto-scrolls, pauses when users interact, and works with touch, mouse, wheel, and keyboard out of the box.
 
 Under the hood it duplicates your content with CSS transforms to keep things seamless. The duplicated blocks are wrapped in `<aside>` elements with `aria-hidden="true"` so screen readers and search engines aren't confused.
 
 ### Features
 
-- Infinite looping scroll with configurable speed
-- Click-and-drag, swipe, normalized mouse wheel, and keyboard controls (Space, ArrowUp/Down, Home/End)
+- Infinite looping scroll on the vertical or horizontal axis with configurable speed
+- Edge-hover mode that only auto-scrolls while the pointer is at the active axis boundary: top/bottom or left/right
+- Click-and-drag, swipe, normalized mouse wheel, and keyboard controls (Space, Arrow keys, Home/End)
 - Pauses auto-scroll on user interaction
 - Responsive to window resizing
 - Visibility hook: add a `content-item` class and react-sway toggles a `.visible` class when elements enter the viewport
