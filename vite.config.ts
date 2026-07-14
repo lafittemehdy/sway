@@ -16,6 +16,7 @@ export default defineConfig({
     alias: {
       react: path.resolve(ROOT_DIR, 'node_modules/react'),
       'react-dom': path.resolve(ROOT_DIR, 'node_modules/react-dom'),
+      'react-sway': path.resolve(ROOT_DIR, 'react-sway/src/index.ts'),
     },
     dedupe: ['react', 'react-dom'],
   },

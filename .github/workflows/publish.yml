@@ -8,48 +8,51 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
           package-manager-cache: false
           registry-url: https://registry.npmjs.org
 
-      - name: Upgrade npm (required for trusted publishing)
-        run: npm install -g npm@latest
+      - name: Install canonical npm
+        run: npm install --global npm@11.18.0
 
       - name: Show tool versions
         run: |
           node --version
           npm --version
 
-      - name: Install root dependencies
-        run: npm ci
+      - name: Validate workspace metadata
+        run: node scripts/check-workspace.mjs
 
-      - name: Install react-sway dependencies
-        working-directory: react-sway
+      - name: Install workspace dependencies
         run: npm ci
 
       - name: Build react-sway
-        working-directory: react-sway
-        run: npm run build
+        run: npm run build --workspace=react-sway
 
       - name: Lint
         run: npm run lint
 
       - name: Test
-        working-directory: react-sway
-        run: npm test
+        run: npm run test --workspace=react-sway
 
       - name: Publish with trusted publishing (OIDC)
-        working-directory: react-sway
-        run: npm publish --access public
+        run: npm publish --workspace=react-sway --access public

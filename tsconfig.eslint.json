@@ -5,9 +5,11 @@
     "react-sway/src",
     "react-sway/vite.config.ts",
     "react-sway/vitest.config.ts",
+    "scripts",
     "vite.config.ts"
   ],
   "compilerOptions": {
+    "allowJs": true,
     "noEmit": true
   }
 }

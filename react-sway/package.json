@@ -7,27 +7,31 @@
     "url": "https://github.com/lafittemehdy/sway/issues"
   },
   "description": "A React component for smooth infinite scrolling, designed for creating engaging, continuous content streams with minimal configuration.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    }
+  },
   "devDependencies": {
-    "@emnapi/core": "^1.11.1",
-    "@emnapi/runtime": "^1.11.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "esbuild": "^0.28.1",
-    "eslint": "^10.6.0",
+    "eslint": "^10.7.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "jsdom": "^29.1.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "typescript": "^6.0.3",
-    "vite": "^8.1.2",
-    "vitest": "^4.1.9"
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
   },
   "files": [
-    "dist",
-    "src",
-    "!src/__tests__"
+    "CHANGELOG.md",
+    "dist"
   ],
   "homepage": "https://github.com/lafittemehdy/sway#readme",
   "keywords": [
@@ -44,12 +48,12 @@
     "ui-component"
   ],
   "license": "MIT",
-  "main": "dist/index.cjs",
-  "module": "dist/index.js",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
   "name": "react-sway",
   "peerDependencies": {
-    "react": ">=16.8.0",
-    "react-dom": ">=16.8.0"
+    "react": ">=17.0.0",
+    "react-dom": ">=17.0.0"
   },
   "publishConfig": {
     "access": "public",
@@ -59,6 +63,7 @@
     "type": "git",
     "url": "git+https://github.com/lafittemehdy/sway.git"
   },
+  "sideEffects": false,
   "scripts": {
     "build": "vite build --config vite.config.ts && tsc -p tsconfig.build.json",
     "dev": "vite build --config vite.config.ts --watch",
@@ -68,6 +73,6 @@
     "test:watch": "vitest"
   },
   "type": "module",
-  "types": "dist/index.d.ts",
-  "version": "0.3.0"
+  "types": "./dist/index.d.ts",
+  "version": "0.4.0"
 }

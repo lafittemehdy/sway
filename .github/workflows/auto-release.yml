@@ -7,7 +7,6 @@ on:
       - package.json
       - package-lock.json
       - react-sway/package.json
-      - react-sway/package-lock.json
 
 permissions:
   contents: write
@@ -20,6 +19,7 @@ jobs:
   auto-release:
     name: Auto-release on dependency update
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: github.actor == 'dependabot[bot]' || contains(github.event.head_commit.message, 'build(deps') || contains(github.event.head_commit.message, 'dependabot')
 
     steps:
@@ -33,20 +33,26 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
           token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
           package-manager-cache: false
 
+      - name: Install canonical npm
+        run: npm install --global npm@11.18.0
+
       - name: Sync branch
         run: git pull --ff-only origin "${GITHUB_REF_NAME}"
+
+      - name: Validate workspace metadata
+        run: node scripts/check-workspace.mjs
 
       - name: Configure git
         run: |
@@ -76,18 +82,19 @@ jobs:
         id: bump
         if: steps.manual-version.outputs.changed != 'true'
         run: |
-          cd react-sway
-          npm version patch --no-git-tag-version
-          npm install --package-lock-only
-          VERSION="v$(node -p "require('./package.json').version")"
+          npm version patch --workspace=react-sway --no-git-tag-version
+          VERSION="v$(node -p "require('./react-sway/package.json').version")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          cd ..
           npm install --package-lock-only
+
+      - name: Validate updated workspace metadata
+        if: steps.manual-version.outputs.changed != 'true'
+        run: node scripts/check-workspace.mjs
 
       - name: Commit and tag version bump
         if: steps.manual-version.outputs.changed != 'true'
         run: |
-          git add package-lock.json react-sway/package.json react-sway/package-lock.json
+          git add package-lock.json react-sway/package.json
           git commit -m "chore: bump version to ${{ steps.bump.outputs.version }}"
           git tag "${{ steps.bump.outputs.version }}"
           git push origin "HEAD:${GITHUB_REF_NAME}" "${{ steps.bump.outputs.version }}"

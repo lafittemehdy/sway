@@ -2,20 +2,40 @@
  * Behavioral and regression tests for ReactSway.
  */
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ReactSway } from '../index';
+import {
+  DEFAULT_EDGE_HOVER_SIZE,
+  DEFAULT_EDGE_HOVER_SPEED_MULTIPLIER,
+  ReactSway,
+} from '../index';
+import type { ReactSwayHandle } from '../index';
 
 const mockDisconnect = vi.fn();
 const mockObserve = vi.fn();
 const mockUnobserve = vi.fn();
 
+let mockIntersectionCallback: IntersectionObserverCallback | null = null;
+let mockIntersectionOptions: IntersectionObserverInit | undefined;
 let mockResizeCallback: (() => void) | null = null;
 const mockResizeDisconnect = vi.fn();
 const mockResizeObserve = vi.fn();
 
 beforeEach(() => {
-  const MockIntersectionObserver = vi.fn(function (this: IntersectionObserver) {
+  mockDisconnect.mockClear();
+  mockObserve.mockClear();
+  mockResizeDisconnect.mockClear();
+  mockResizeObserve.mockClear();
+  mockUnobserve.mockClear();
+
+  const MockIntersectionObserver = vi.fn(function (
+    this: IntersectionObserver,
+    callback: IntersectionObserverCallback,
+    options?: IntersectionObserverInit,
+  ) {
+    mockIntersectionCallback = callback;
+    mockIntersectionOptions = options;
     this.disconnect = mockDisconnect;
     this.observe = mockObserve;
     this.root = null;
@@ -37,8 +57,24 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  mockIntersectionCallback = null;
+  mockIntersectionOptions = undefined;
   mockResizeCallback = null;
   vi.restoreAllMocks();
+});
+
+const commitObservedMeasurement = async () => {
+  await act(async () => {
+    mockResizeCallback?.();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
+};
+
+describe('public edge-hover configuration contract', () => {
+  it('exports stable defaults for application-level interaction profiles', () => {
+    expect(DEFAULT_EDGE_HOVER_SIZE).toBe(96);
+    expect(DEFAULT_EDGE_HOVER_SPEED_MULTIPLIER).toBe(6);
+  });
 });
 
 describe('ReactSway', () => {
@@ -51,18 +87,19 @@ describe('ReactSway', () => {
       );
 
       const children = screen.getAllByTestId('child');
-      expect(children).toHaveLength(3);
+      expect(children).toHaveLength(2);
     });
 
-    it('renders container with correct class name', () => {
+    it('preserves canonical and consumer-provided class names', () => {
       const { container } = render(
-        <ReactSway>
+        <ReactSway className="consumer-sway-surface">
           <div>Content</div>
         </ReactSway>
       );
 
       const swayContainer = container.querySelector('.react-sway-container');
       expect(swayContainer).toBeInTheDocument();
+      expect(swayContainer).toHaveClass('scroller-content', 'consumer-sway-surface');
     });
 
     it('renders duplicate groups with accessibility attributes', () => {
@@ -73,11 +110,13 @@ describe('ReactSway', () => {
       );
 
       const duplicates = container.querySelectorAll('[data-duplicate="true"]');
-      expect(duplicates).toHaveLength(2);
+      expect(duplicates).toHaveLength(1);
 
       duplicates.forEach((duplicate) => {
         expect(duplicate.getAttribute('aria-hidden')).toBe('true');
+        expect(duplicate).toHaveAttribute('inert');
         expect(duplicate.getAttribute('role')).toBe('presentation');
+        expect((duplicate as HTMLElement).style.pointerEvents).toBe('none');
         expect(duplicate.tagName.toLowerCase()).toBe('aside');
       });
     });
@@ -107,7 +146,7 @@ describe('ReactSway', () => {
       });
 
       await waitFor(() => {
-        expect(container.querySelectorAll('.content-group')).toHaveLength(7);
+        expect(container.querySelectorAll('.content-group')).toHaveLength(6);
       });
     });
 
@@ -146,6 +185,43 @@ describe('ReactSway', () => {
       expect(swayContainer.style.height).toBe('100%');
       expect(swayContainer.style.width).toBe('max-content');
       expect(swayContainer.style.touchAction).toBe('pan-y');
+    });
+
+    it('infers horizontal layout from left and right directions', () => {
+      const { container, rerender } = render(
+        <ReactSway direction="left">
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      expect(swayContainer.style.display).toBe('flex');
+      expect(swayContainer.style.touchAction).toBe('pan-y');
+
+      rerender(
+        <ReactSway direction="right">
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      expect(swayContainer.style.display).toBe('flex');
+      expect(swayContainer.style.touchAction).toBe('pan-y');
+    });
+
+    it('renders horizontal duplicate groups as non-interactive flex segments', () => {
+      const { container } = render(
+        <ReactSway axis="horizontal">
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const duplicates = container.querySelectorAll<HTMLElement>('[data-duplicate="true"]');
+
+      duplicates.forEach((duplicate) => {
+        expect(duplicate.style.display).toBe('flex');
+        expect(duplicate.style.flex).toBe('0 0 auto');
+        expect(duplicate.style.pointerEvents).toBe('none');
+      });
     });
 
     it('sizes vertical layout by content height so translated tracks cannot expose empty space', () => {
@@ -205,9 +281,43 @@ describe('ReactSway', () => {
       const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
       expect(swayContainer.style.overscrollBehavior).toBe('auto');
     });
+
+    it('adds enough horizontal duplicate groups when original content is narrower than the viewport', async () => {
+      const { container } = render(
+        <ReactSway axis="horizontal">
+          <div>Short content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const originalGroup = container.querySelector('.content-group.original') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+
+      Object.defineProperty(originalGroup, 'scrollWidth', {
+        configurable: true,
+        value: 100,
+      });
+      Object.defineProperty(viewport, 'clientWidth', {
+        configurable: true,
+        value: 420,
+      });
+
+      act(() => {
+        mockResizeCallback?.();
+      });
+
+      await waitFor(() => {
+        expect(container.querySelectorAll('.content-group')).toHaveLength(6);
+      });
+    });
   });
 
   describe('draggable prop', () => {
+    const hasWindowListenerCall = (
+      spy: ReturnType<typeof vi.spyOn<typeof window, 'addEventListener'>>,
+      eventName: string,
+    ) => spy.mock.calls.some(([type]) => type === eventName);
+
     it('applies grab cursor when draggable (default)', () => {
       const { container } = render(
         <ReactSway>
@@ -228,6 +338,137 @@ describe('ReactSway', () => {
 
       const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
       expect(swayContainer.style.cursor).toBe('default');
+    });
+
+    it('does not install idle global drag listeners before a drag starts', () => {
+      const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+
+      render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      expect(hasWindowListenerCall(addEventListenerSpy, 'mousemove')).toBe(false);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'mouseup')).toBe(false);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'touchmove')).toBe(false);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'touchend')).toBe(false);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'touchcancel')).toBe(false);
+    });
+
+    it('does not install idle global drag listeners when drag is disabled', () => {
+      const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+
+      render(
+        <ReactSway draggable={false}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      expect(hasWindowListenerCall(addEventListenerSpy, 'mousemove')).toBe(false);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'mouseup')).toBe(false);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'touchmove')).toBe(false);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'touchend')).toBe(false);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'touchcancel')).toBe(false);
+    });
+
+    it('installs global mouse drag listeners only for the active drag', () => {
+      const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+      const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
+      const { container } = render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      addEventListenerSpy.mockClear();
+      removeEventListenerSpy.mockClear();
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.mouseDown(swayContainer, { clientX: 0, clientY: 0 });
+
+      expect(hasWindowListenerCall(addEventListenerSpy, 'mousemove')).toBe(true);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'mouseup')).toBe(true);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'blur')).toBe(true);
+
+      fireEvent.mouseUp(window, { clientX: 0, clientY: 0 });
+
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'mousemove')).toBe(true);
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'mouseup')).toBe(true);
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'blur')).toBe(true);
+    });
+
+    it('updates position and cursor during vertical mouse drag', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway autoScroll={false} onScroll={onScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const originalGroup = container.querySelector('.content-group.original') as HTMLElement;
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      Object.defineProperty(originalGroup, 'scrollHeight', {
+        configurable: true,
+        value: 120,
+      });
+      await commitObservedMeasurement();
+
+      fireEvent.mouseDown(swayContainer, { clientX: 0, clientY: 0 });
+
+      expect(document.activeElement).toBe(swayContainer);
+      expect(swayContainer.style.cursor).toBe('grabbing');
+
+      fireEvent.mouseMove(window, { clientX: 0, clientY: -24 });
+
+      expect(onScroll).toHaveBeenCalledWith(-24);
+      expect(swayContainer.style.transform).toContain('-24px');
+
+      fireEvent.mouseUp(window, { clientX: 0, clientY: -24 });
+      expect(swayContainer.style.cursor).toBe('grab');
+    });
+
+    it('updates position during horizontal mouse drag', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway autoScroll={false} axis="horizontal" onScroll={onScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const originalGroup = container.querySelector('.content-group.original') as HTMLElement;
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      Object.defineProperty(originalGroup, 'scrollWidth', {
+        configurable: true,
+        value: 120,
+      });
+      await commitObservedMeasurement();
+
+      fireEvent.mouseDown(swayContainer, { clientX: 0, clientY: 0 });
+      fireEvent.mouseMove(window, { clientX: -32, clientY: 0 });
+
+      expect(onScroll).toHaveBeenCalledWith(-32);
+      expect(swayContainer.style.transform).toContain('-32px');
+
+      fireEvent.mouseUp(window, { clientX: -32, clientY: 0 });
+    });
+
+    it('cleans up active mouse drag listeners on blur', () => {
+      const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
+      const { container } = render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.mouseDown(swayContainer, { clientX: 0, clientY: 0 });
+      fireEvent.blur(window);
+
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'mousemove')).toBe(true);
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'mouseup')).toBe(true);
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'blur')).toBe(true);
+      expect(swayContainer.style.cursor).toBe('grab');
     });
   });
 
@@ -252,6 +493,105 @@ describe('ReactSway', () => {
 
       const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
       expect(swayContainer.getAttribute('tabindex')).toBeNull();
+    });
+
+    it('ignores keyboard events when keyboard is disabled', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway keyboard={false} onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.keyDown(swayContainer, { key: ' ' });
+
+      expect(onPause).not.toHaveBeenCalled();
+    });
+
+    it('maps vertical arrow keys to vertical movement only', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway autoScroll={false} friction={1} onScroll={onScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.keyDown(swayContainer, { key: 'ArrowDown' });
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) < 0)).toBe(true);
+      });
+
+      cleanup();
+
+      const ignoredScroll = vi.fn();
+      const { container: ignoredContainer } = render(
+        <ReactSway autoScroll={false} friction={1} onScroll={ignoredScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+      const ignoredSwayContainer = ignoredContainer.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.keyDown(ignoredSwayContainer, { key: 'ArrowLeft' });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(ignoredScroll).not.toHaveBeenCalled();
+    });
+
+    it('maps horizontal arrow keys to horizontal movement only', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway autoScroll={false} axis="horizontal" friction={1} onScroll={onScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.keyDown(swayContainer, { key: 'ArrowRight' });
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) < 0)).toBe(true);
+      });
+
+      cleanup();
+
+      const ignoredScroll = vi.fn();
+      const { container: ignoredContainer } = render(
+        <ReactSway autoScroll={false} axis="horizontal" friction={1} onScroll={ignoredScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+      const ignoredSwayContainer = ignoredContainer.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.keyDown(ignoredSwayContainer, { key: 'ArrowDown' });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(ignoredScroll).not.toHaveBeenCalled();
+    });
+
+    it('moves to loop endpoints with End and Home keys', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway autoScroll={false} onScroll={onScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const originalGroup = container.querySelector('.content-group.original') as HTMLElement;
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+
+      Object.defineProperty(originalGroup, 'scrollHeight', {
+        configurable: true,
+        value: 120,
+      });
+
+      await commitObservedMeasurement();
+
+      fireEvent.keyDown(swayContainer, { key: 'End' });
+      expect(onScroll).toHaveBeenLastCalledWith(-120);
+
+      fireEvent.keyDown(swayContainer, { key: 'Home' });
+      expect(onScroll).toHaveBeenLastCalledWith(0);
     });
   });
 
@@ -299,6 +639,82 @@ describe('ReactSway', () => {
       expect(onResume).toHaveBeenCalledOnce();
     });
 
+    it('uses the latest onScroll callback after rerender', () => {
+      const initialOnScroll = vi.fn();
+      const nextOnScroll = vi.fn();
+      const { container, rerender } = render(
+        <ReactSway autoScroll={false} onScroll={initialOnScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      rerender(
+        <ReactSway autoScroll={false} onScroll={nextOnScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.wheel(swayContainer, { deltaY: 120 });
+
+      expect(initialOnScroll).not.toHaveBeenCalled();
+      expect(nextOnScroll).toHaveBeenCalled();
+    });
+
+    it('uses the latest onPause callback after rerender', () => {
+      const initialOnPause = vi.fn();
+      const nextOnPause = vi.fn();
+      const { container, rerender } = render(
+        <ReactSway onPause={initialOnPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      rerender(
+        <ReactSway onPause={nextOnPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      fireEvent.wheel(swayContainer, { deltaY: 120 });
+
+      expect(initialOnPause).not.toHaveBeenCalled();
+      expect(nextOnPause).toHaveBeenCalledOnce();
+    });
+
+    it('uses the latest delayed onResume callback after rerender', () => {
+      vi.useFakeTimers();
+
+      try {
+        const initialOnResume = vi.fn();
+        const nextOnResume = vi.fn();
+        const { container, rerender } = render(
+          <ReactSway onResume={initialOnResume} resumeDelay={50}>
+            <div>Content</div>
+          </ReactSway>
+        );
+
+        const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+        fireEvent.wheel(swayContainer, { deltaY: 120 });
+
+        rerender(
+          <ReactSway onResume={nextOnResume} resumeDelay={50}>
+            <div>Content</div>
+          </ReactSway>
+        );
+
+        act(() => {
+          vi.advanceTimersByTime(60);
+        });
+
+        expect(initialOnResume).not.toHaveBeenCalled();
+        expect(nextOnResume).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('does not fire onPause when pauseOnInteraction is false', () => {
       const onPause = vi.fn();
       const { container } = render(
@@ -339,6 +755,73 @@ describe('ReactSway', () => {
     });
   });
 
+  describe('auto-scroll', () => {
+    it('does not emit automatic scroll updates when autoScroll is false', async () => {
+      const onScroll = vi.fn();
+      render(
+        <ReactSway autoScroll={false} onScroll={onScroll} speed={8}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(onScroll).not.toHaveBeenCalled();
+    });
+
+    it('scrolls upward by default', async () => {
+      const onScroll = vi.fn();
+      render(
+        <ReactSway onScroll={onScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) < 0)).toBe(true);
+      });
+    });
+
+    it('scrolls downward for direction="down"', async () => {
+      const onScroll = vi.fn();
+      render(
+        <ReactSway direction="down" onScroll={onScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) > 0)).toBe(true);
+      });
+    });
+
+    it('scrolls horizontally according to left and right directions', async () => {
+      const leftScroll = vi.fn();
+      render(
+        <ReactSway direction="left" onScroll={leftScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      await waitFor(() => {
+        expect(leftScroll.mock.calls.some(([position]) => (position as number) < 0)).toBe(true);
+      });
+
+      cleanup();
+
+      const rightScroll = vi.fn();
+      render(
+        <ReactSway direction="right" onScroll={rightScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      await waitFor(() => {
+        expect(rightScroll.mock.calls.some(([position]) => (position as number) > 0)).toBe(true);
+      });
+    });
+  });
+
   describe('IntersectionObserver', () => {
     it('sets up observer for content items', () => {
       render(
@@ -348,6 +831,90 @@ describe('ReactSway', () => {
       );
 
       expect(IntersectionObserver).toHaveBeenCalled();
+    });
+
+    it('observes each lazy content item across original and duplicate loop groups', () => {
+      render(
+        <ReactSway>
+          <div className="content-item">First</div>
+          <div className="content-item">Second</div>
+        </ReactSway>
+      );
+
+      expect(mockObserve).toHaveBeenCalledTimes(4);
+    });
+
+    it('passes custom lazy observer options to IntersectionObserver', () => {
+      render(
+        <ReactSway lazyRootMargin="250px" lazyThreshold={0.5}>
+          <div className="content-item">Item</div>
+        </ReactSway>
+      );
+
+      expect(mockIntersectionOptions).toMatchObject({
+        root: null,
+        rootMargin: '250px',
+        threshold: 0.5,
+      });
+    });
+
+    it.each([
+      { expected: 0, threshold: -1 },
+      { expected: 1, threshold: 2 },
+      { expected: 0.01, threshold: Number.NaN },
+    ])('normalizes lazy threshold $threshold to $expected', ({ expected, threshold }) => {
+      render(
+        <ReactSway lazyThreshold={threshold}>
+          <div className="content-item">Item</div>
+        </ReactSway>
+      );
+
+      expect(mockIntersectionOptions?.threshold).toBe(expected);
+    });
+
+    it('marks intersecting lazy content items as visible', () => {
+      const { container } = render(
+        <ReactSway>
+          <div className="content-item">Item</div>
+        </ReactSway>
+      );
+
+      const item = container.querySelector('.content-item') as HTMLElement;
+      mockIntersectionCallback?.(
+        [{ isIntersecting: true, target: item } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+
+      expect(item).toHaveClass('visible');
+    });
+
+    it('leaves non-intersecting lazy content items hidden', () => {
+      const { container } = render(
+        <ReactSway>
+          <div className="content-item">Item</div>
+        </ReactSway>
+      );
+
+      const item = container.querySelector('.content-item') as HTMLElement;
+      mockIntersectionCallback?.(
+        [{ isIntersecting: false, target: item } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+
+      expect(item).not.toHaveClass('visible');
+    });
+
+    it('unobserves lazy items and disconnects on unmount', () => {
+      const { unmount } = render(
+        <ReactSway>
+          <div className="content-item">Item</div>
+        </ReactSway>
+      );
+
+      unmount();
+
+      expect(mockUnobserve).toHaveBeenCalledTimes(2);
+      expect(mockDisconnect).toHaveBeenCalledOnce();
     });
 
     it('handles missing IntersectionObserver gracefully', () => {
@@ -436,6 +1003,36 @@ describe('ReactSway', () => {
       expect(onPause).not.toHaveBeenCalled();
     });
 
+    it('emits pause only on the active-to-paused transition', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+
+      fireEvent.wheel(swayContainer, { deltaY: 100 });
+      fireEvent.wheel(swayContainer, { deltaY: 100 });
+      fireEvent.wheel(swayContainer, { deltaY: 100 });
+
+      expect(onPause).toHaveBeenCalledOnce();
+    });
+
+    it('does not emit pause when autonomous scrolling is already disabled', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway autoScroll={false} onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+
+      fireEvent.wheel(swayContainer, { deltaY: 100 });
+
+      expect(onPause).not.toHaveBeenCalled();
+    });
+
     it('consumes horizontal wheel intent in horizontal axis mode', () => {
       const onPause = vi.fn();
       const { container } = render(
@@ -482,6 +1079,76 @@ describe('ReactSway', () => {
       expect(propagated).toBe(false);
       expect(wheelEvent.defaultPrevented).toBe(true);
       expect(onPause).toHaveBeenCalledOnce();
+    });
+
+    it('lets horizontal wheel intent pass through vertical Sway in axis mode', () => {
+      const onPause = vi.fn();
+      const { container } = render(
+        <ReactSway onPause={onPause}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const { propagated, wheelEvent } = dispatchCancelableWheel(swayContainer, { deltaX: 100, deltaY: 12 });
+
+      expect(propagated).toBe(true);
+      expect(wheelEvent.defaultPrevented).toBe(false);
+      expect(onPause).not.toHaveBeenCalled();
+    });
+
+    it('exposes an imperative wheel route for external wheel ownership', () => {
+      const onPause = vi.fn();
+      const ref = createRef<ReactSwayHandle>();
+      render(
+        <ReactSway axis="horizontal" onPause={onPause} ref={ref} wheelMode="capture">
+          <div>Content</div>
+        </ReactSway>
+      );
+      const wheelEvent = new WheelEvent('wheel', {
+        cancelable: true,
+        deltaY: 100,
+      });
+
+      expect(ref.current?.handleWheel(wheelEvent)).toBe(true);
+      expect(wheelEvent.defaultPrevented).toBe(true);
+      expect(onPause).toHaveBeenCalledOnce();
+    });
+
+    it('leaves external cross-axis wheel intent unowned in axis mode', () => {
+      const onPause = vi.fn();
+      const ref = createRef<ReactSwayHandle>();
+      render(
+        <ReactSway axis="horizontal" onPause={onPause} ref={ref} wheelMode="axis">
+          <div>Content</div>
+        </ReactSway>
+      );
+      const wheelEvent = new WheelEvent('wheel', {
+        cancelable: true,
+        deltaY: 100,
+      });
+
+      expect(ref.current?.handleWheel(wheelEvent)).toBe(false);
+      expect(wheelEvent.defaultPrevented).toBe(false);
+      expect(onPause).not.toHaveBeenCalled();
+    });
+
+    it('leaves external wheel events unowned when wheel handling is disabled', () => {
+      const onPause = vi.fn();
+      const ref = createRef<ReactSwayHandle>();
+      render(
+        <ReactSway onPause={onPause} ref={ref} wheelEnabled={false}>
+          <div>Content</div>
+        </ReactSway>
+      );
+      const wheelEvent = new WheelEvent('wheel', {
+        cancelable: true,
+        deltaY: 100,
+      });
+
+      expect(ref.current?.handleWheel(wheelEvent)).toBe(false);
+      expect(wheelEvent.defaultPrevented).toBe(false);
+      expect(onPause).not.toHaveBeenCalled();
     });
 
     it('normalizes line-based wheel deltas before applying velocity', async () => {
@@ -545,9 +1212,9 @@ describe('ReactSway', () => {
         fireEvent.wheel(swayContainer, { deltaY: 1000 });
       }
 
-      // If velocity were uncapped, it would be 20 * 1000 * 0.3 = 6000
-      // With cap at 150, onPause is still called but velocity is bounded
-      expect(onPause).toHaveBeenCalled();
+      // If velocity were uncapped, it would be 20 * 1000 * 0.14 = 2800.
+      // The burst is one pause transition and velocity remains bounded.
+      expect(onPause).toHaveBeenCalledOnce();
     });
 
     it('does not respond to wheel when wheelEnabled is false', () => {
@@ -565,6 +1232,11 @@ describe('ReactSway', () => {
   });
 
   describe('touch interactions', () => {
+    const hasWindowListenerCall = (
+      spy: ReturnType<typeof vi.spyOn<typeof window, 'addEventListener'>>,
+      eventName: string,
+    ) => spy.mock.calls.some(([type]) => type === eventName);
+
     const createTouchEvent = (
       type: string,
       touch: { clientX: number; clientY: number } | null,
@@ -632,6 +1304,108 @@ describe('ReactSway', () => {
       expect(touchMoveEvent.defaultPrevented).toBe(true);
       expect(onPause).toHaveBeenCalledOnce();
     });
+
+    it('updates vertical position after touch axis lock', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway autoScroll={false} onScroll={onScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const originalGroup = container.querySelector('.content-group.original') as HTMLElement;
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      Object.defineProperty(originalGroup, 'scrollHeight', {
+        configurable: true,
+        value: 120,
+      });
+      await commitObservedMeasurement();
+
+      swayContainer.dispatchEvent(createTouchEvent('touchstart', { clientX: 0, clientY: 0 }));
+      const touchMoveEvent = createTouchEvent('touchmove', { clientX: 1, clientY: -24 });
+      window.dispatchEvent(touchMoveEvent);
+
+      expect(touchMoveEvent.defaultPrevented).toBe(true);
+      expect(onScroll).toHaveBeenCalledWith(-24);
+      expect(swayContainer.style.transform).toContain('-24px');
+    });
+
+    it('updates horizontal position after touch axis lock', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway autoScroll={false} axis="horizontal" onScroll={onScroll}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const originalGroup = container.querySelector('.content-group.original') as HTMLElement;
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      Object.defineProperty(originalGroup, 'scrollWidth', {
+        configurable: true,
+        value: 120,
+      });
+      await commitObservedMeasurement();
+
+      swayContainer.dispatchEvent(createTouchEvent('touchstart', { clientX: 0, clientY: 0 }));
+      const touchMoveEvent = createTouchEvent('touchmove', { clientX: -24, clientY: 1 });
+      window.dispatchEvent(touchMoveEvent);
+
+      expect(touchMoveEvent.defaultPrevented).toBe(true);
+      expect(onScroll).toHaveBeenCalledWith(-24);
+      expect(swayContainer.style.transform).toContain('-24px');
+    });
+
+    it('schedules auto-scroll resume after an active touch gesture ends', () => {
+      vi.useFakeTimers();
+
+      try {
+        const onResume = vi.fn();
+        const { container } = render(
+          <ReactSway onResume={onResume} resumeDelay={50}>
+            <div>Content</div>
+          </ReactSway>
+        );
+
+        const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+        swayContainer.dispatchEvent(createTouchEvent('touchstart', { clientX: 0, clientY: 0 }));
+        window.dispatchEvent(createTouchEvent('touchmove', { clientX: 0, clientY: -24 }));
+        window.dispatchEvent(createTouchEvent('touchend', null));
+
+        act(() => {
+          vi.advanceTimersByTime(60);
+        });
+
+        expect(onResume).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('installs global touch listeners only for the active touch gesture', () => {
+      const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+      const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
+      const { container } = render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      addEventListenerSpy.mockClear();
+      removeEventListenerSpy.mockClear();
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      swayContainer.dispatchEvent(createTouchEvent('touchstart', { clientX: 0, clientY: 0 }));
+
+      expect(hasWindowListenerCall(addEventListenerSpy, 'touchmove')).toBe(true);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'touchend')).toBe(true);
+      expect(hasWindowListenerCall(addEventListenerSpy, 'touchcancel')).toBe(true);
+
+      window.dispatchEvent(createTouchEvent('touchcancel', null));
+
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'touchmove')).toBe(true);
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'touchend')).toBe(true);
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'touchcancel')).toBe(true);
+    });
   });
 
   describe('ResizeObserver', () => {
@@ -645,28 +1419,87 @@ describe('ReactSway', () => {
       expect(mockResizeObserve).toHaveBeenCalled();
     });
 
-    it('debounces rapid resize events', () => {
-      vi.useFakeTimers();
-
-      render(
+    it('disconnects observer on unmount', () => {
+      const { unmount } = render(
         <ReactSway>
           <div>Content</div>
         </ReactSway>
       );
 
-      // Fire the ResizeObserver callback multiple times rapidly
-      if (mockResizeCallback) {
-        for (let i = 0; i < 5; i++) {
-          mockResizeCallback();
-        }
+      unmount();
+
+      expect(mockResizeDisconnect).toHaveBeenCalledOnce();
+    });
+
+    it('registers and removes the window resize fallback listener', () => {
+      const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+      const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
+      const { unmount } = render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      expect(addEventListenerSpy.mock.calls.some(([type]) => type === 'resize')).toBe(true);
+
+      unmount();
+
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'resize')).toBe(true);
+    });
+
+    it('observes original content and viewport instead of the translated track', () => {
+      const { container } = render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const originalGroup = container.querySelector('.content-group.original') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+
+      expect(mockResizeObserve).toHaveBeenCalledWith(originalGroup);
+      expect(mockResizeObserve).toHaveBeenCalledWith(viewport);
+      expect(mockResizeObserve).not.toHaveBeenCalledWith(swayContainer);
+    });
+
+    it('coalesces rapid resize observations into a single frame', () => {
+      vi.useFakeTimers();
+
+      const { container } = render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const originalGroup = container.querySelector('.content-group.original') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      let scrollHeightReadCount = 0;
+
+      Object.defineProperty(originalGroup, 'scrollHeight', {
+        configurable: true,
+        get() {
+          scrollHeightReadCount += 1;
+          return 100;
+        },
+      });
+      Object.defineProperty(viewport, 'clientHeight', {
+        configurable: true,
+        value: 420,
+      });
+
+      for (let i = 0; i < 5; i++) {
+        mockResizeCallback?.();
       }
 
-      // Before debounce delay, nothing should have recalculated yet
-      // After debounce delay (150ms), recalculation fires once
-      vi.advanceTimersByTime(200);
+      expect(scrollHeightReadCount).toBe(0);
 
-      // Verify observer was set up (the debounce is internal)
-      expect(mockResizeObserve).toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(scrollHeightReadCount).toBe(1);
 
       vi.useRealTimers();
     });
@@ -699,6 +1532,22 @@ describe('ReactSway', () => {
         Object.defineProperty(document, 'hidden', { value: false, writable: true });
         fireEvent(document, new Event('visibilitychange'));
       }).not.toThrow();
+    });
+
+    it('removes visibility listener on unmount', () => {
+      const addEventListenerSpy = vi.spyOn(document, 'addEventListener');
+      const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener');
+      const { unmount } = render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      expect(addEventListenerSpy.mock.calls.some(([type]) => type === 'visibilitychange')).toBe(true);
+
+      unmount();
+
+      expect(removeEventListenerSpy.mock.calls.some(([type]) => type === 'visibilitychange')).toBe(true);
     });
   });
 
@@ -794,9 +1643,25 @@ describe('ReactSway', () => {
       const viewport = swayContainer.parentElement as HTMLElement;
       setViewportRect(viewport);
 
-      fireEvent.mouseMove(viewport, { clientY: 150 });
+      fireEvent.pointerMove(viewport, { clientY: 150 });
       await waitForAnimationFrames();
 
+      expect(onScroll).not.toHaveBeenCalled();
+    });
+
+    it('keeps edge-hover auto-scroll sleeping until a boundary is entered', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway draggable={false} edgeHoverScroll edgeHoverSize={40} onScroll={onScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      await waitForAnimationFrames();
       expect(onScroll).not.toHaveBeenCalled();
     });
 
@@ -812,14 +1677,14 @@ describe('ReactSway', () => {
       const viewport = swayContainer.parentElement as HTMLElement;
       setViewportRect(viewport);
 
-      fireEvent.mouseMove(viewport, { clientY: 10 });
+      fireEvent.pointerMove(viewport, { clientY: 10 });
 
       await waitFor(() => {
         expect(onScroll.mock.calls.some(([position]) => (position as number) > 0)).toBe(true);
       });
 
       onScroll.mockClear();
-      fireEvent.mouseMove(viewport, { clientY: 290 });
+      fireEvent.pointerMove(viewport, { clientY: 290 });
 
       await waitFor(() => {
         expect(onScroll.mock.calls.some(([position]) => (position as number) < 0)).toBe(true);
@@ -843,7 +1708,7 @@ describe('ReactSway', () => {
         top: 0,
       });
 
-      fireEvent.mouseMove(viewport, { clientY: 290 });
+      fireEvent.pointerMove(viewport, { clientY: 290 });
 
       await waitFor(() => {
         expect(onScroll.mock.calls.some(([position]) => (position as number) < 0)).toBe(true);
@@ -862,18 +1727,330 @@ describe('ReactSway', () => {
       const viewport = swayContainer.parentElement as HTMLElement;
       setViewportRect(viewport);
 
-      fireEvent.mouseMove(viewport, { clientX: 10 });
+      fireEvent.pointerMove(viewport, { clientX: 10 });
 
       await waitFor(() => {
         expect(onScroll.mock.calls.some(([position]) => (position as number) > 0)).toBe(true);
       });
 
       onScroll.mockClear();
-      fireEvent.mouseMove(viewport, { clientX: 290 });
+      fireEvent.pointerMove(viewport, { clientX: 290 });
 
       await waitFor(() => {
         expect(onScroll.mock.calls.some(([position]) => (position as number) < 0)).toBe(true);
       });
+    });
+
+    it('scrolls horizontal content from pointer edge-hover zones', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway axis="horizontal" draggable={false} edgeHoverScroll edgeHoverSize={40} onScroll={onScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      fireEvent.pointerMove(viewport, { clientX: 10 });
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) > 0)).toBe(true);
+      });
+    });
+
+    it('exposes an imperative edge-hover route for external pointer ownership', async () => {
+      const onScroll = vi.fn();
+      const ref = createRef<ReactSwayHandle>();
+      const { container } = render(
+        <ReactSway axis="horizontal" draggable={false} edgeHoverScroll edgeHoverSize={40} onScroll={onScroll} ref={ref} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      expect(ref.current?.handleEdgeHover({ clientX: 10, clientY: 150 })).toBe(true);
+
+      await waitFor(() => {
+        expect(onScroll.mock.calls.some(([position]) => (position as number) > 0)).toBe(true);
+      });
+    });
+
+    it('uses only imperative input in external mode even when auto-scroll is disabled', async () => {
+      const onScroll = vi.fn();
+      const ref = createRef<ReactSwayHandle>();
+      const { container } = render(
+        <ReactSway
+          autoScroll={false}
+          axis="horizontal"
+          draggable={false}
+          edgeHoverInputMode="external"
+          edgeHoverScroll
+          edgeHoverSize={40}
+          onScroll={onScroll}
+          ref={ref}
+          speed={4}
+        >
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      fireEvent.pointerMove(viewport, { clientX: 10, clientY: 150 });
+      await waitForAnimationFrames();
+      expect(onScroll).not.toHaveBeenCalled();
+
+      expect(ref.current?.handleEdgeHover({ clientX: 10, clientY: 150 })).toBe(true);
+      await waitFor(() => expect(onScroll).toHaveBeenCalled());
+    });
+
+    it('keeps an external edge-hover lease alive across native pointer leave', async () => {
+      const onScroll = vi.fn();
+      const ref = createRef<ReactSwayHandle>();
+      const { container } = render(
+        <ReactSway axis="horizontal" draggable={false} edgeHoverScroll edgeHoverSize={40} onScroll={onScroll} ref={ref} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      expect(ref.current?.handleEdgeHover({ clientX: 10, clientY: 150 })).toBe(true);
+      await waitFor(() => expect(onScroll).toHaveBeenCalled());
+
+      onScroll.mockClear();
+      fireEvent.pointerLeave(viewport);
+      await waitFor(() => expect(onScroll).toHaveBeenCalled());
+
+      onScroll.mockClear();
+      ref.current?.clearEdgeHover();
+      await waitForAnimationFrames();
+      expect(onScroll).not.toHaveBeenCalled();
+    });
+
+    it('applies a materially increasing velocity at each external edge-depth tier', () => {
+      let nextFrameId = 1;
+      const queuedFrames = new Map<number, FrameRequestCallback>();
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        const frameId = nextFrameId;
+        nextFrameId += 1;
+        queuedFrames.set(frameId, callback);
+        return frameId;
+      });
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((frameId) => {
+        queuedFrames.delete(frameId);
+      });
+
+      const flushFrame = (timestamp: number) => {
+        const currentFrame = [...queuedFrames.values()];
+        queuedFrames.clear();
+        act(() => {
+          currentFrame.forEach((callback) => callback(timestamp));
+        });
+      };
+      const onScroll = vi.fn();
+      const ref = createRef<ReactSwayHandle>();
+      const { container } = render(
+        <ReactSway
+          autoScroll={false}
+          axis="horizontal"
+          draggable={false}
+          edgeHoverInputMode="external"
+          edgeHoverScroll
+          edgeHoverSize={40}
+          onScroll={onScroll}
+          ref={ref}
+          speed={1}
+        >
+          <div>Content</div>
+        </ReactSway>
+      );
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+      flushFrame(0);
+
+      let previousPosition = 0;
+      const sampleDelta = (clientX: number, timestamp: number) => {
+        expect(ref.current?.handleEdgeHover({ clientX, clientY: 150 })).toBe(true);
+        flushFrame(timestamp);
+        const nextPosition = onScroll.mock.lastCall?.[0] as number;
+        const delta = Math.abs(nextPosition - previousPosition);
+        previousPosition = nextPosition;
+        return delta;
+      };
+      const shallowDelta = sampleDelta(268, 16.667);
+      const midDelta = sampleDelta(280, 33.334);
+      const physicalEdgeDelta = sampleDelta(300, 50.001);
+      const beyondEdgeDelta = sampleDelta(340, 66.668);
+
+      expect(shallowDelta).toBeGreaterThan(0);
+      expect(midDelta).toBeGreaterThan(shallowDelta);
+      expect(physicalEdgeDelta).toBeGreaterThan(midDelta);
+      expect(physicalEdgeDelta).toBeCloseTo(3);
+      expect(beyondEdgeDelta).toBeGreaterThan(physicalEdgeDelta * 1.9);
+      expect(beyondEdgeDelta).toBeCloseTo(6);
+
+      const callCountBeforeRelease = onScroll.mock.calls.length;
+      ref.current?.clearEdgeHover();
+      flushFrame(83.335);
+      expect(onScroll).toHaveBeenCalledTimes(callCountBeforeRelease);
+    });
+
+    it('bounds frame-gap catch-up and excludes idle wall time on re-entry', () => {
+      let nextFrameId = 1;
+      const queuedFrames = new Map<number, FrameRequestCallback>();
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        const frameId = nextFrameId;
+        nextFrameId += 1;
+        queuedFrames.set(frameId, callback);
+        return frameId;
+      });
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((frameId) => {
+        queuedFrames.delete(frameId);
+      });
+
+      const flushFrame = (timestamp: number) => {
+        const currentFrame = [...queuedFrames.values()];
+        queuedFrames.clear();
+        act(() => {
+          currentFrame.forEach((callback) => callback(timestamp));
+        });
+      };
+
+      const onScroll = vi.fn();
+      const ref = createRef<ReactSwayHandle>();
+      const { container } = render(
+        <ReactSway
+          axis="horizontal"
+          draggable={false}
+          edgeHoverScroll
+          edgeHoverSize={40}
+          edgeHoverSpeedMultiplier={4}
+          onScroll={onScroll}
+          ref={ref}
+          speed={1}
+        >
+          <div>Content</div>
+        </ReactSway>
+      );
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      flushFrame(0);
+      onScroll.mockClear();
+
+      ref.current?.handleEdgeHover({ clientX: -40, clientY: 150 });
+      flushFrame(16.667);
+      expect(onScroll).toHaveBeenLastCalledWith(4);
+
+      flushFrame(66.668);
+      expect(onScroll).toHaveBeenLastCalledWith(8);
+
+      ref.current?.handleEdgeHover({ clientX: 150, clientY: 150 });
+      flushFrame(83.335);
+      expect(onScroll).toHaveBeenCalledTimes(2);
+
+      ref.current?.handleEdgeHover({ clientX: -40, clientY: 150 });
+      flushFrame(10_000);
+      expect(onScroll).toHaveBeenLastCalledWith(12);
+    });
+
+    it('rejects imperative edge-hover samples when edge-hover scrolling is disabled', async () => {
+      const onScroll = vi.fn();
+      const ref = createRef<ReactSwayHandle>();
+      const { container } = render(
+        <ReactSway autoScroll={false} axis="horizontal" draggable={false} edgeHoverScroll={false} onScroll={onScroll} ref={ref} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      expect(ref.current?.handleEdgeHover({ clientX: 10, clientY: 150 })).toBe(false);
+
+      await waitForAnimationFrames();
+      expect(onScroll).not.toHaveBeenCalled();
+    });
+
+    it('rejects imperative edge-hover samples when no visible edge interval exists', () => {
+      const ref = createRef<ReactSwayHandle>();
+      const { container } = render(
+        <ReactSway axis="horizontal" draggable={false} edgeHoverScroll ref={ref}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport, {
+        left: 1100,
+        right: 1200,
+      });
+
+      expect(ref.current?.handleEdgeHover({ clientX: 1110, clientY: 150 })).toBe(false);
+    });
+
+    it('stops edge-hover scrolling on pointer leave', async () => {
+      const onScroll = vi.fn();
+      const { container } = render(
+        <ReactSway axis="horizontal" draggable={false} edgeHoverScroll edgeHoverSize={40} onScroll={onScroll} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      fireEvent.pointerMove(viewport, { clientX: 10 });
+      await waitFor(() => {
+        expect(onScroll).toHaveBeenCalled();
+      });
+
+      onScroll.mockClear();
+      fireEvent.pointerLeave(viewport);
+      await waitForAnimationFrames();
+
+      expect(onScroll).not.toHaveBeenCalled();
+    });
+
+    it('clears imperative edge-hover intensity', async () => {
+      const onScroll = vi.fn();
+      const ref = createRef<ReactSwayHandle>();
+      const { container } = render(
+        <ReactSway axis="horizontal" draggable={false} edgeHoverScroll edgeHoverSize={40} onScroll={onScroll} ref={ref} speed={4}>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      const swayContainer = container.querySelector('.react-sway-container') as HTMLElement;
+      const viewport = swayContainer.parentElement as HTMLElement;
+      setViewportRect(viewport);
+
+      ref.current?.handleEdgeHover({ clientX: 10, clientY: 150 });
+
+      await waitFor(() => {
+        expect(onScroll).toHaveBeenCalled();
+      });
+
+      onScroll.mockClear();
+      ref.current?.clearEdgeHover();
+      await waitForAnimationFrames();
+
+      expect(onScroll).not.toHaveBeenCalled();
     });
   });
 
@@ -924,10 +2101,38 @@ describe('ReactSway', () => {
 
       // Simulate media query change to reduced motion
       expect(() => {
-        if (changeHandler) {
-          changeHandler({ matches: true } as MediaQueryListEvent);
-        }
+        act(() => {
+          changeHandler?.({ matches: true } as MediaQueryListEvent);
+        });
       }).not.toThrow();
+    });
+
+    it('removes reduced-motion listener on unmount', () => {
+      const addEventListener = vi.fn();
+      const removeEventListener = vi.fn();
+
+      vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+        addEventListener,
+        addListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+        matches: false,
+        media: query,
+        onchange: null,
+        removeEventListener,
+        removeListener: vi.fn(),
+      })));
+
+      const { unmount } = render(
+        <ReactSway>
+          <div>Content</div>
+        </ReactSway>
+      );
+
+      expect(addEventListener).toHaveBeenCalledWith('change', expect.any(Function));
+
+      unmount();
+
+      expect(removeEventListener).toHaveBeenCalledWith('change', expect.any(Function));
     });
   });
 });

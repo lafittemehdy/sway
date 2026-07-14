@@ -11,13 +11,13 @@ export default defineConfig({
       fileName: (format) => (format === 'es' ? 'index.js' : 'index.cjs'),
       formats: ['es', 'cjs'],
     },
-    rollupOptions: {
+    rolldownOptions: {
       external: ['react', 'react-dom', 'react/jsx-runtime'],
       output: {
         exports: 'named',
       },
     },
     minify: false,
-    target: 'esnext',
+    target: 'es2020',
   },
 });

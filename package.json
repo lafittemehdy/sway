@@ -1,38 +1,56 @@
 {
   "dependencies": {
+    "@chenglou/pretext": "^0.0.8",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-sway": "file:./react-sway",
     "react-veil": "^0.1.3"
   },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "onFail": "error",
+      "version": "^10.9.0 || ^11.0.0"
+    },
+    "runtime": {
+      "name": "node",
+      "onFail": "error",
+      "version": "^22.12.0 || ^24.0.0"
+    }
+  },
   "devDependencies": {
-    "@emnapi/core": "^1.11.1",
-    "@emnapi/runtime": "^1.11.1",
     "@eslint/js": "^10.0.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@typescript-eslint/eslint-plugin": "^8.62.1",
-    "@typescript-eslint/parser": "^8.62.1",
+    "@typescript-eslint/eslint-plugin": "^8.64.0",
+    "@typescript-eslint/parser": "^8.64.0",
     "@vitejs/plugin-react": "^6.0.3",
-    "eslint": "^10.6.0",
+    "eslint": "^10.7.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "gh-pages": "^6.3.0",
     "globals": "^17.7.0",
     "typescript": "^6.0.3",
-    "vite": "^8.1.2"
+    "vite": "^8.1.4"
   },
   "homepage": "https://lafittemehdy.github.io/sway/",
   "name": "sway",
+  "packageManager": "npm@11.18.0",
   "private": true,
   "scripts": {
     "build": "vite build",
+    "build:package": "npm run build --workspace=react-sway",
+    "check": "npm run check:workspace && npm run lint && npm run test && npm run build:package && npm run build",
+    "check:workspace": "node scripts/check-workspace.mjs",
     "deploy": "gh-pages -d dist",
     "dev": "vite",
     "lint": "eslint .",
     "predeploy": "npm run build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "npm run test --workspace=react-sway"
   },
   "type": "module",
-  "version": "0.1.1"
+  "version": "0.1.1",
+  "workspaces": [
+    "react-sway"
+  ]
 }

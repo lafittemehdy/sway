@@ -1,13 +1,32 @@
 /**
  * Core ReactSway component implementing axis-aware infinite scrolling interactions.
  */
-import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import {
+  DEFAULT_EDGE_HOVER_SIZE,
+  DEFAULT_EDGE_HOVER_SPEED_MULTIPLIER,
+  getEdgeHoverIntensity,
+  getEdgeHoverVelocityScale,
+  normalizeEdgeHoverIntensity,
+  normalizeEdgeHoverSpeedMultiplier,
+  type VisibleEdgeInterval,
+} from './edge-hover-velocity';
+import { getOwnedWheelDelta, type SwayWheelMode } from './wheel-input';
+
+export type { SwayWheelMode } from './wheel-input';
 
 /** Velocity applied per arrow key press (pixels). */
 const ARROW_KEY_VELOCITY = 15;
-
-/** Default edge-hover activation thickness in pixels. */
-const DEFAULT_EDGE_HOVER_SIZE = 96;
 
 /** Default friction coefficient applied to velocity each frame. */
 const DEFAULT_FRICTION = 0.95;
@@ -24,11 +43,14 @@ const DEFAULT_RESUME_DELAY = 2000;
 /** Default scroll speed in pixels per frame at 60fps. */
 const DEFAULT_SPEED = 0.5;
 
-/** Number of stacked content groups used to build the seamless loop. */
-const MIN_LOOP_SEGMENTS = 3;
+/** Minimum stacked content groups needed to cover a seamless loop phase. */
+const MIN_LOOP_SEGMENTS = 2;
 
 /** Maximum deltaTime cap to prevent physics instability during frame drops. */
 const MAX_DELTA_TIME = 3;
+
+/** Edge-hover catch-up cap; larger jumps read as stalls followed by snapping. */
+const MAX_EDGE_HOVER_DELTA_TIME = 1;
 
 /** Maximum allowed velocity magnitude to prevent runaway scrolling. */
 const MAX_VELOCITY = 150;
@@ -39,117 +61,57 @@ const MS_PER_FRAME_60FPS = 16.667;
 /** Speed multiplier when user prefers reduced motion (25% of normal). */
 const REDUCED_MOTION_SPEED_FACTOR = 0.25;
 
-/** Debounce delay in milliseconds for ResizeObserver callbacks. */
-const RESIZE_DEBOUNCE_MS = 150;
-
-/** Fallback pixel height for wheel events reported in line units. */
-const WHEEL_LINE_HEIGHT_FALLBACK_PX = 16;
-
-/** WheelEvent deltaMode value for line-based deltas. */
-const WHEEL_MODE_LINE = 1;
-
-/** WheelEvent deltaMode value for page-based deltas. */
-const WHEEL_MODE_PAGE = 2;
-
-/** Minimum pixel impulse for discrete wheel hardware reporting tiny pixel deltas. */
-const WHEEL_PIXEL_MIN_DELTA_PX = 48;
-
 /** Multiplier applied to wheel deltaY to convert to scroll velocity. */
 const WHEEL_VELOCITY_MULTIPLIER = 0.14;
 
 /** Small immediate wheel movement used to keep input responsive without jumping. */
 const WHEEL_IMMEDIATE_DELTA_FACTOR = 0.14;
 
-/** Legacy wheelDelta magnitude that usually represents one physical wheel notch. */
-const WHEEL_LEGACY_NOTCH_DELTA = 120;
-
 /** Minimum touch movement before a gesture is classified by axis. */
 const TOUCH_AXIS_LOCK_THRESHOLD_PX = 8;
 
-interface WheelEventWithLegacyDelta extends globalThis.WheelEvent {
-  wheelDelta?: number;
-  wheelDeltaY?: number;
-}
-
 export type SwayAxis = 'horizontal' | 'vertical';
 export type SwayDirection = 'down' | 'left' | 'right' | 'up';
-export type SwayWheelMode = 'axis' | 'capture';
-
-type WheelDeltaAxis = 'x' | 'y';
+export type SwayEdgeHoverInputMode = 'external' | 'hybrid';
+type SwayPointerLikeEvent = globalThis.MouseEvent | globalThis.PointerEvent;
 type TouchInteractionState = 'active' | 'idle' | 'ignored' | 'pending';
 
-function getLegacyWheelPixelDeltaY(event: globalThis.WheelEvent) {
-  const { wheelDelta, wheelDeltaY } = event as WheelEventWithLegacyDelta;
-  const legacyWheelDelta = typeof wheelDeltaY === 'number' ? wheelDeltaY : wheelDelta;
-
-  if (typeof legacyWheelDelta !== 'number' || !Number.isFinite(legacyWheelDelta)) {
-    return 0;
-  }
-
-  return -(legacyWheelDelta / WHEEL_LEGACY_NOTCH_DELTA) * WHEEL_PIXEL_MIN_DELTA_PX;
+interface EdgeHoverIntervalCache {
+  interval: VisibleEdgeInterval | null;
+  isHorizontal: boolean;
+  viewport: HTMLElement;
 }
 
-/**
- * Converts wheel deltas to pixels so mouse wheels, touchpads, and page-wheel
- * devices feed the same Sway velocity system.
- */
-function normalizeWheelDelta(event: globalThis.WheelEvent, container: HTMLElement, axis: WheelDeltaAxis) {
-  const rawDelta = axis === 'x' ? event.deltaX : event.deltaY;
-
-  if (event.deltaMode === WHEEL_MODE_LINE) {
-    const computedLineHeight = Number.parseFloat(window.getComputedStyle(container).lineHeight);
-    const lineHeight = Number.isFinite(computedLineHeight)
-      ? computedLineHeight
-      : WHEEL_LINE_HEIGHT_FALLBACK_PX;
-
-    return rawDelta * lineHeight;
-  }
-
-  if (event.deltaMode === WHEEL_MODE_PAGE) {
-    const pageSize = axis === 'x'
-      ? Math.max(container.clientWidth, window.innerWidth, 1)
-      : Math.max(container.clientHeight, window.innerHeight, 1);
-
-    return rawDelta * pageSize;
-  }
-
-  if (axis === 'x') return rawDelta;
-
-  const legacyWheelPixelDeltaY = getLegacyWheelPixelDeltaY(event);
-
-  if (
-    Math.abs(rawDelta) < WHEEL_PIXEL_MIN_DELTA_PX &&
-    Math.abs(legacyWheelPixelDeltaY) >= WHEEL_PIXEL_MIN_DELTA_PX
-  ) {
-    return legacyWheelPixelDeltaY;
-  }
-
-  return rawDelta;
+interface LoopMeasurement {
+  contentSize: number;
+  isHorizontal: boolean;
+  viewportSize: number;
 }
 
-function getOwnedWheelDelta(
-  event: globalThis.WheelEvent,
-  container: HTMLElement,
-  isHorizontal: boolean,
-  wheelMode: SwayWheelMode,
-) {
-  // The ownership function is intentionally partial: null means native scroll
-  // chaining remains the browser's responsibility for cross-axis gestures.
-  const deltaX = normalizeWheelDelta(event, container, 'x');
-  const deltaY = normalizeWheelDelta(event, container, 'y');
-  const absDeltaX = Math.abs(deltaX);
-  const absDeltaY = Math.abs(deltaY);
-
-  if (isHorizontal) {
-    if (wheelMode === 'axis' && absDeltaX <= absDeltaY && !event.shiftKey) return null;
-    return absDeltaX > absDeltaY ? deltaX : deltaY;
-  }
-
-  if (wheelMode === 'axis' && absDeltaX > absDeltaY) return null;
-  return deltaY;
+export interface ReactSwayHandle {
+  /**
+   * Routes an external pointer sample through ReactSway's edge-hover policy.
+   *
+   * This is useful when another interaction owns pointer capture but still
+   * wants ReactSway to keep its boundary scrolling semantics.
+   * Returns true when an enabled, visible instance accepted the sample. A true
+   * result does not imply motion when the pointer is in the inactive center.
+   * The first accepted sample acquires an external-input lease that survives
+   * native pointer leave; consumers must call `clearEdgeHover` on termination.
+   */
+  handleEdgeHover: (point: { clientX: number; clientY: number }) => boolean;
+  /**
+   * Routes an external wheel event through ReactSway's normalized wheel physics.
+   *
+   * Returns true when the event was consumed by ReactSway and false when the
+   * current wheel policy leaves the event to native scroll chaining.
+   */
+  handleWheel: (event: globalThis.WheelEvent) => boolean;
+  /** Releases external edge-hover ownership and clears active intensity. */
+  clearEdgeHover: () => void;
 }
 
-function getVisibleEdgeInterval(rect: DOMRect, isHorizontal: boolean) {
+function getVisibleEdgeInterval(rect: DOMRect, isHorizontal: boolean): VisibleEdgeInterval | null {
   const rectEnd = isHorizontal ? rect.right : rect.bottom;
   const rectStart = isHorizontal ? rect.left : rect.top;
   const viewportEnd = isHorizontal ? window.innerWidth : window.innerHeight;
@@ -170,20 +132,35 @@ function getVisibleEdgeInterval(rect: DOMRect, isHorizontal: boolean) {
  * Props for the ReactSway infinite scrolling component.
  */
 export interface ReactSwayProps {
+  /** Accessible name for the scrolling region. */
+  ariaLabel?: string;
   /** Scroll axis. Horizontal directions imply `horizontal` when omitted. @default 'vertical' */
   axis?: SwayAxis;
   /** Enable/disable auto-scrolling. @default true */
   autoScroll?: boolean;
   /** Content elements to render in the infinite scroll container. */
   children: ReactNode;
+  /** Additional class name applied to the semantic scrolling region. */
+  className?: string;
   /** Auto-scroll direction. @default 'up' */
   direction?: SwayDirection;
   /** Enable mouse/touch drag interaction. @default true */
   draggable?: boolean;
-  /** Only auto-scroll while the pointer hovers an axis boundary. @default false */
+  /**
+   * Selects intrinsic pointer sensing plus the imperative bridge (`hybrid`),
+   * or imperative external ownership only (`external`). @default 'hybrid'
+   */
+  edgeHoverInputMode?: SwayEdgeHoverInputMode;
+  /**
+   * Only auto-scroll while the pointer hovers an axis boundary. Active motion
+   * preserves baseline speed, then accelerates toward the visible edge.
+   * @default false
+   */
   edgeHoverScroll?: boolean;
   /** Edge-hover activation thickness in pixels. @default 96 */
   edgeHoverSize?: number;
+  /** Maximum edge-hover velocity relative to the baseline `speed`. @default 6 */
+  edgeHoverSpeedMultiplier?: number;
   /** Momentum decay coefficient (0-1, lower = more friction). @default 0.95 */
   friction?: number;
   /** Enable keyboard controls (Space, Arrow keys, Home/End). @default true */
@@ -204,7 +181,7 @@ export interface ReactSwayProps {
   pauseOnInteraction?: boolean;
   /** Milliseconds before auto-scroll resumes after interaction. @default 2000 */
   resumeDelay?: number;
-  /** Auto-scroll speed in pixels per frame at 60fps. @default 0.5 */
+  /** Baseline auto-scroll speed in pixels per frame at 60fps. @default 0.5 */
   speed?: number;
   /** Enable mouse wheel scrolling. @default true */
   wheelEnabled?: boolean;
@@ -240,14 +217,18 @@ export interface ReactSwayProps {
  * </ReactSway>
  * ```
  */
-function ReactSway({
+const ReactSway = forwardRef<ReactSwayHandle, ReactSwayProps>(function ReactSway({
+  ariaLabel = 'Scrollable content',
   axis,
   autoScroll = true,
   children,
+  className,
   direction = 'up',
   draggable = true,
+  edgeHoverInputMode = 'hybrid',
   edgeHoverScroll = false,
   edgeHoverSize = DEFAULT_EDGE_HOVER_SIZE,
+  edgeHoverSpeedMultiplier = DEFAULT_EDGE_HOVER_SPEED_MULTIPLIER,
   friction = DEFAULT_FRICTION,
   keyboard = true,
   lazy = true,
@@ -261,7 +242,7 @@ function ReactSway({
   speed = DEFAULT_SPEED,
   wheelEnabled = true,
   wheelMode = 'axis',
-}: ReactSwayProps) {
+}: ReactSwayProps, ref) {
   const scrollAxis = useMemo<SwayAxis>(
     () => axis ?? (direction === 'left' || direction === 'right' ? 'horizontal' : 'vertical'),
     [axis, direction],
@@ -271,9 +252,19 @@ function ReactSway({
     () => (Number.isFinite(edgeHoverSize) ? Math.max(1, edgeHoverSize) : DEFAULT_EDGE_HOVER_SIZE),
     [edgeHoverSize],
   );
+  const normalizedEdgeHoverSpeedMultiplier = useMemo(
+    () => normalizeEdgeHoverSpeedMultiplier(edgeHoverSpeedMultiplier),
+    [edgeHoverSpeedMultiplier],
+  );
   const normalizedFriction = useMemo(
     () => (Number.isFinite(friction) ? Math.min(Math.max(friction, 0), 1) : DEFAULT_FRICTION),
     [friction],
+  );
+  const normalizedLazyThreshold = useMemo(
+    () => (Number.isFinite(lazyThreshold)
+      ? Math.min(Math.max(lazyThreshold, 0), 1)
+      : DEFAULT_LAZY_THRESHOLD),
+    [lazyThreshold],
   );
   const normalizedResumeDelay = useMemo(
     () => (Number.isFinite(resumeDelay) ? Math.max(0, resumeDelay) : DEFAULT_RESUME_DELAY),
@@ -291,10 +282,10 @@ function ReactSway({
   // otherwise cross-axis and disabled-wheel page scroll must remain chainable.
   const overscrollBehavior = wheelEnabled && wheelMode === 'capture' ? 'contain' : 'auto';
 
-  const [isDragging, setIsDragging] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  const [isTabActive, setIsTabActive] = useState(true);
-  const [loopPoint, setLoopPoint] = useState(0);
+  const [isTabActive, setIsTabActive] = useState(() => (
+    typeof document === 'undefined' || !document.hidden
+  ));
   const [loopSegmentCount, setLoopSegmentCount] = useState(MIN_LOOP_SEGMENTS);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -302,8 +293,9 @@ function ReactSway({
   });
 
   const animationFrameRef = useRef<number | null>(null);
+  const animationLoopRef = useRef<((currentTime: number) => void) | null>(null);
   const autoScrollRef = useRef({ active: autoScroll, desired: autoScroll });
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLElement>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDraggingRef = useRef(false);
   const isPausedRef = useRef(false);
@@ -313,13 +305,19 @@ function ReactSway({
   const lastTouchXRef = useRef(0);
   const lastTouchYRef = useRef(0);
   const loopPointRef = useRef(0);
-  const edgeHoverDirectionRef = useRef(0);
+  const edgeHoverIntervalCacheFrameRef = useRef<number | null>(null);
+  const edgeHoverIntervalCacheRef = useRef<EdgeHoverIntervalCache | null>(null);
+  const edgeHoverIntensityRef = useRef(0);
+  const externalEdgeHoverLeaseRef = useRef(false);
   const onPauseRef = useRef(onPause);
   const onResumeRef = useRef(onResume);
   const onScrollRef = useRef(onScroll);
   const originalGroupRef = useRef<HTMLDivElement>(null);
   const positionRef = useRef(0);
-  const resizeDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loopMeasurementFrameRef = useRef<number | null>(null);
+  const lastLoopMeasurementRef = useRef<LoopMeasurement | null>(null);
+  const mouseDragListenerCleanupRef = useRef<(() => void) | null>(null);
+  const touchDragListenerCleanupRef = useRef<(() => void) | null>(null);
   const touchInteractionStateRef = useRef<TouchInteractionState>('idle');
   const touchStartXRef = useRef(0);
   const touchStartYRef = useRef(0);
@@ -351,6 +349,44 @@ function ReactSway({
     inactivityTimerRef.current = null;
   }, []);
 
+  const startAnimationLoop = useCallback(() => {
+    if (animationFrameRef.current !== null || !animationLoopRef.current) return;
+    animationFrameRef.current = requestAnimationFrame(animationLoopRef.current);
+  }, []);
+
+  const clearEdgeHoverIntervalCache = useCallback(() => {
+    edgeHoverIntervalCacheRef.current = null;
+
+    if (edgeHoverIntervalCacheFrameRef.current !== null) {
+      cancelAnimationFrame(edgeHoverIntervalCacheFrameRef.current);
+      edgeHoverIntervalCacheFrameRef.current = null;
+    }
+  }, []);
+
+  const readVisibleEdgeInterval = useCallback((viewport: HTMLElement) => {
+    const cachedInterval = edgeHoverIntervalCacheRef.current;
+
+    if (
+      cachedInterval &&
+      cachedInterval.viewport === viewport &&
+      cachedInterval.isHorizontal === isHorizontal
+    ) {
+      return cachedInterval.interval;
+    }
+
+    const interval = getVisibleEdgeInterval(viewport.getBoundingClientRect(), isHorizontal);
+    edgeHoverIntervalCacheRef.current = { interval, isHorizontal, viewport };
+
+    if (edgeHoverIntervalCacheFrameRef.current === null) {
+      edgeHoverIntervalCacheFrameRef.current = requestAnimationFrame(() => {
+        edgeHoverIntervalCacheFrameRef.current = null;
+        edgeHoverIntervalCacheRef.current = null;
+      });
+    }
+
+    return interval;
+  }, [isHorizontal]);
+
   const renderPosition = useCallback((rawPosition: number) => {
     if (!containerRef.current) return;
     const currentLoopPoint = loopPointRef.current;
@@ -374,15 +410,20 @@ function ReactSway({
     const currentLoopPoint = loopPointRef.current;
     if (currentLoopPoint <= 0) return rawPosition;
 
-    let wrappedPosition = rawPosition;
-    while (wrappedPosition > 0) {
-      wrappedPosition -= currentLoopPoint;
-    }
-    while (wrappedPosition < -currentLoopPoint * 2) {
-      wrappedPosition += currentLoopPoint;
-    }
+    if (rawPosition <= 0 && rawPosition >= -currentLoopPoint * 2) return rawPosition;
+
+    let wrappedPosition = rawPosition % currentLoopPoint;
+    if (wrappedPosition > 0) wrappedPosition -= currentLoopPoint;
     return wrappedPosition;
   }, []);
+
+  const setDraggingState = useCallback((nextIsDragging: boolean) => {
+    isDraggingRef.current = nextIsDragging;
+
+    if (containerRef.current && draggable) {
+      containerRef.current.style.cursor = nextIsDragging ? 'grabbing' : 'grab';
+    }
+  }, [draggable]);
 
   const recalculateLoopPoint = useCallback(() => {
     if (!containerRef.current || !originalGroupRef.current) return;
@@ -395,14 +436,28 @@ function ReactSway({
     const viewportSize = isHorizontal
       ? Math.max(viewport.clientWidth, 1)
       : Math.max(viewport.clientHeight, 1);
-    const nextLoopSegmentCount = Math.max(MIN_LOOP_SEGMENTS, Math.ceil(viewportSize / originalContentSize) + 2);
+    const nextLoopSegmentCount = Math.max(MIN_LOOP_SEGMENTS, Math.ceil(viewportSize / originalContentSize) + 1);
     const nextLoopPoint = originalContentSize;
+    const previousMeasurement = lastLoopMeasurementRef.current;
+    const nextMeasurement = {
+      contentSize: originalContentSize,
+      isHorizontal,
+      viewportSize,
+    };
 
+    if (
+      previousMeasurement?.contentSize === nextMeasurement.contentSize &&
+      previousMeasurement.isHorizontal === nextMeasurement.isHorizontal &&
+      previousMeasurement.viewportSize === nextMeasurement.viewportSize
+    ) {
+      return;
+    }
+
+    lastLoopMeasurementRef.current = nextMeasurement;
     setLoopSegmentCount((previousLoopSegmentCount) =>
       previousLoopSegmentCount === nextLoopSegmentCount ? previousLoopSegmentCount : nextLoopSegmentCount
     );
     loopPointRef.current = nextLoopPoint;
-    setLoopPoint((previousLoopPoint) => (Math.abs(previousLoopPoint - nextLoopPoint) < 0.5 ? previousLoopPoint : nextLoopPoint));
     renderPosition(positionRef.current);
   }, [isHorizontal, renderPosition]);
 
@@ -412,27 +467,34 @@ function ReactSway({
     if (!autoScroll) {
       clearInactivityTimer();
       autoScrollRef.current.active = true;
+    } else {
+      startAnimationLoop();
     }
-  }, [autoScroll, clearInactivityTimer]);
+  }, [autoScroll, clearInactivityTimer, startAnimationLoop]);
 
-  // Sync loopPoint ref after state updates from observers/resizes
-  useEffect(() => {
-    loopPointRef.current = loopPoint;
-    renderPosition(positionRef.current);
-  }, [loopPoint, renderPosition]);
+  const scheduleLoopPointRecalculation = useCallback(() => {
+    clearEdgeHoverIntervalCache();
+
+    if (loopMeasurementFrameRef.current !== null) return;
+
+    loopMeasurementFrameRef.current = requestAnimationFrame(() => {
+      loopMeasurementFrameRef.current = null;
+      recalculateLoopPoint();
+    });
+  }, [clearEdgeHoverIntervalCache, recalculateLoopPoint]);
 
   // Dimension calculation
   useEffect(() => {
-    // Use RAF to ensure layout is complete
-    const rafId = requestAnimationFrame(recalculateLoopPoint);
-
-    return () => {
-      cancelAnimationFrame(rafId);
-    };
-  }, [children, recalculateLoopPoint]);
+    lastLoopMeasurementRef.current = null;
+    scheduleLoopPointRecalculation();
+  }, [children, isHorizontal, scheduleLoopPointRecalculation]);
 
   const pauseAutoScroll = useCallback(() => {
-    if (!pauseOnInteraction) return;
+    if (
+      !pauseOnInteraction ||
+      !autoScrollRef.current.desired ||
+      !autoScrollRef.current.active
+    ) return;
     autoScrollRef.current.active = false;
     onPauseRef.current?.();
     clearInactivityTimer();
@@ -447,8 +509,9 @@ function ReactSway({
       if (!autoScrollRef.current.desired || isPausedRef.current) return;
       autoScrollRef.current.active = true;
       onResumeRef.current?.();
+      startAnimationLoop();
     }, normalizedResumeDelay);
-  }, [clearInactivityTimer, normalizedResumeDelay, pauseOnInteraction]);
+  }, [clearInactivityTimer, normalizedResumeDelay, pauseOnInteraction, startAnimationLoop]);
 
   const togglePause = useCallback(() => {
     const newPaused = !isPausedRef.current;
@@ -464,10 +527,30 @@ function ReactSway({
       if (autoScrollRef.current.desired) {
         onResumeRef.current?.();
       }
+      startAnimationLoop();
     }
-  }, [clearInactivityTimer]);
+  }, [clearInactivityTimer, startAnimationLoop]);
 
-  const handleKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+  const setEdgeHoverIntensity = useCallback((nextIntensityValue: number) => {
+    const nextIntensity = normalizeEdgeHoverIntensity(nextIntensityValue);
+    edgeHoverIntensityRef.current = nextIntensity;
+
+    if (nextIntensity !== 0) {
+      startAnimationLoop();
+    }
+  }, [startAnimationLoop]);
+
+  const detachMouseDragListeners = useCallback(() => {
+    mouseDragListenerCleanupRef.current?.();
+    mouseDragListenerCleanupRef.current = null;
+  }, []);
+
+  const detachTouchDragListeners = useCallback(() => {
+    touchDragListenerCleanupRef.current?.();
+    touchDragListenerCleanupRef.current = null;
+  }, []);
+
+  const handleKeyDown = useCallback((e: ReactKeyboardEvent<HTMLElement>) => {
     if (!keyboard) return;
 
     switch (e.key) {
@@ -522,19 +605,8 @@ function ReactSway({
       default:
         break;
     }
-  }, [commitPosition, isHorizontal, keyboard, pauseAutoScroll, scheduleAutoScrollResume, togglePause]);
-
-  const handleMouseDown = useCallback((e: globalThis.MouseEvent) => {
-    if (!draggable) return;
-    e.preventDefault();
-    containerRef.current?.focus();
-    setIsDragging(true);
-    isDraggingRef.current = true;
-    lastMouseXRef.current = e.clientX;
-    lastMouseYRef.current = e.clientY;
-    velocityRef.current = 0;
-    pauseAutoScroll();
-  }, [draggable, pauseAutoScroll]);
+    startAnimationLoop();
+  }, [commitPosition, isHorizontal, keyboard, pauseAutoScroll, scheduleAutoScrollResume, startAnimationLoop, togglePause]);
 
   const handleMouseMove = useCallback((e: globalThis.MouseEvent) => {
     if (!isDraggingRef.current) return;
@@ -550,24 +622,59 @@ function ReactSway({
   const handleMouseUp = useCallback((e: globalThis.MouseEvent) => {
     if (!isDraggingRef.current) return;
     e.preventDefault();
-    setIsDragging(false);
-    isDraggingRef.current = false;
+    setDraggingState(false);
+    detachMouseDragListeners();
     scheduleAutoScrollResume();
-  }, [scheduleAutoScrollResume]);
+    startAnimationLoop();
+  }, [detachMouseDragListeners, scheduleAutoScrollResume, setDraggingState, startAnimationLoop]);
+
+  const handleMouseCancel = useCallback(() => {
+    if (!isDraggingRef.current) return;
+    setDraggingState(false);
+    detachMouseDragListeners();
+    scheduleAutoScrollResume();
+    startAnimationLoop();
+  }, [detachMouseDragListeners, scheduleAutoScrollResume, setDraggingState, startAnimationLoop]);
+
+  const attachMouseDragListeners = useCallback(() => {
+    detachMouseDragListeners();
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleMouseCancel);
+    mouseDragListenerCleanupRef.current = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('blur', handleMouseCancel);
+    };
+  }, [detachMouseDragListeners, handleMouseCancel, handleMouseMove, handleMouseUp]);
+
+  const handleMouseDown = useCallback((e: globalThis.MouseEvent) => {
+    if (!draggable) return;
+    e.preventDefault();
+    containerRef.current?.focus();
+    setDraggingState(true);
+    lastMouseXRef.current = e.clientX;
+    lastMouseYRef.current = e.clientY;
+    velocityRef.current = 0;
+    pauseAutoScroll();
+    attachMouseDragListeners();
+    startAnimationLoop();
+  }, [attachMouseDragListeners, draggable, pauseAutoScroll, setDraggingState, startAnimationLoop]);
 
   const handleTouchEnd = useCallback((_e: globalThis.TouchEvent) => {
     const wasActive = touchInteractionStateRef.current === 'active';
 
     touchInteractionStateRef.current = 'idle';
+    detachTouchDragListeners();
     if (isDraggingRef.current) {
-      setIsDragging(false);
-      isDraggingRef.current = false;
+      setDraggingState(false);
     }
 
     if (wasActive) {
       scheduleAutoScrollResume();
+      startAnimationLoop();
     }
-  }, [scheduleAutoScrollResume]);
+  }, [detachTouchDragListeners, scheduleAutoScrollResume, setDraggingState, startAnimationLoop]);
 
   const handleTouchMove = useCallback((e: globalThis.TouchEvent) => {
     if (touchInteractionStateRef.current === 'idle' || touchInteractionStateRef.current === 'ignored') return;
@@ -589,8 +696,7 @@ function ReactSway({
       }
 
       touchInteractionStateRef.current = 'active';
-      setIsDragging(true);
-      isDraggingRef.current = true;
+      setDraggingState(true);
       pauseAutoScroll();
     }
 
@@ -601,7 +707,19 @@ function ReactSway({
     velocityRef.current = delta;
     lastTouchXRef.current = touch.clientX;
     lastTouchYRef.current = touch.clientY;
-  }, [commitPosition, isHorizontal, pauseAutoScroll, wrapPosition]);
+  }, [commitPosition, isHorizontal, pauseAutoScroll, setDraggingState, wrapPosition]);
+
+  const attachTouchDragListeners = useCallback(() => {
+    detachTouchDragListeners();
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd, { passive: true });
+    window.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+    touchDragListenerCleanupRef.current = () => {
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  }, [detachTouchDragListeners, handleTouchEnd, handleTouchMove]);
 
   const handleTouchStart = useCallback((e: globalThis.TouchEvent) => {
     if (!draggable || e.touches.length !== 1) return;
@@ -612,15 +730,16 @@ function ReactSway({
     touchStartXRef.current = e.touches[0].clientX;
     touchStartYRef.current = e.touches[0].clientY;
     velocityRef.current = 0;
-  }, [draggable]);
+    attachTouchDragListeners();
+  }, [attachTouchDragListeners, draggable]);
 
   const handleWheel = useCallback((e: globalThis.WheelEvent) => {
-    if (!wheelEnabled) return;
+    if (!wheelEnabled) return false;
     const currentContainer = e.currentTarget instanceof HTMLElement ? e.currentTarget : containerRef.current;
-    if (!currentContainer) return;
+    if (!currentContainer) return false;
 
     const ownedDelta = getOwnedWheelDelta(e, currentContainer, isHorizontal, wheelMode);
-    if (ownedDelta === null) return;
+    if (ownedDelta === null) return false;
 
     e.preventDefault();
     const wheelDelta = -ownedDelta;
@@ -630,120 +749,159 @@ function ReactSway({
     velocityRef.current = Math.max(-MAX_VELOCITY, Math.min(MAX_VELOCITY, velocityRef.current));
     pauseAutoScroll();
     scheduleAutoScrollResume();
-  }, [commitPosition, isHorizontal, pauseAutoScroll, scheduleAutoScrollResume, wheelEnabled, wheelMode, wrapPosition]);
+    startAnimationLoop();
+    return true;
+  }, [commitPosition, isHorizontal, pauseAutoScroll, scheduleAutoScrollResume, startAnimationLoop, wheelEnabled, wheelMode, wrapPosition]);
 
-  const handleEdgeHoverMove = useCallback((e: globalThis.MouseEvent) => {
-    if (!edgeHoverScroll) return;
+  const applyEdgeHoverPoint = useCallback((point: { clientX: number; clientY: number }) => {
+    if (!edgeHoverScroll) return false;
     const viewport = containerRef.current?.parentElement ?? containerRef.current;
-    if (!viewport) return;
+    if (!viewport) return false;
 
-    const rect = viewport.getBoundingClientRect();
-    const visibleInterval = getVisibleEdgeInterval(rect, isHorizontal);
+    const visibleInterval = readVisibleEdgeInterval(viewport);
     if (!visibleInterval) {
-      edgeHoverDirectionRef.current = 0;
-      return;
+      setEdgeHoverIntensity(0);
+      return false;
     }
 
-    const pointerPosition = isHorizontal ? e.clientX : e.clientY;
-    const effectiveEdgeHoverSize = Math.min(normalizedEdgeHoverSize, visibleInterval.size / 2);
+    const pointerPosition = isHorizontal ? point.clientX : point.clientY;
+    const nextIntensity = getEdgeHoverIntensity(
+      pointerPosition,
+      visibleInterval,
+      normalizedEdgeHoverSize,
+    );
+    setEdgeHoverIntensity(nextIntensity);
+    return true;
+  }, [edgeHoverScroll, isHorizontal, normalizedEdgeHoverSize, readVisibleEdgeInterval, setEdgeHoverIntensity]);
 
-    if (pointerPosition <= visibleInterval.start + effectiveEdgeHoverSize) {
-      edgeHoverDirectionRef.current = 1;
-      return;
-    }
+  const handleEdgeHover = useCallback((point: { clientX: number; clientY: number }) => {
+    const accepted = applyEdgeHoverPoint(point);
+    externalEdgeHoverLeaseRef.current = accepted;
+    return accepted;
+  }, [applyEdgeHoverPoint]);
 
-    if (pointerPosition >= visibleInterval.end - effectiveEdgeHoverSize) {
-      edgeHoverDirectionRef.current = -1;
-      return;
-    }
+  const clearEdgeHover = useCallback(() => {
+    externalEdgeHoverLeaseRef.current = false;
+    setEdgeHoverIntensity(0);
+  }, [setEdgeHoverIntensity]);
 
-    edgeHoverDirectionRef.current = 0;
-  }, [edgeHoverScroll, isHorizontal, normalizedEdgeHoverSize]);
+  useImperativeHandle(ref, () => ({
+    clearEdgeHover,
+    handleEdgeHover,
+    handleWheel,
+  }), [clearEdgeHover, handleEdgeHover, handleWheel]);
+
+  const handleEdgeHoverMove = useCallback((e: SwayPointerLikeEvent) => {
+    if (externalEdgeHoverLeaseRef.current) return;
+    applyEdgeHoverPoint(e);
+  }, [applyEdgeHoverPoint]);
 
   const handleEdgeHoverLeave = useCallback(() => {
-    edgeHoverDirectionRef.current = 0;
-  }, []);
+    if (externalEdgeHoverLeaseRef.current) return;
+    setEdgeHoverIntensity(0);
+  }, [setEdgeHoverIntensity]);
 
   // Event listener registration
   useEffect(() => {
     const currentContainer = containerRef.current;
     if (!currentContainer) return;
 
-    currentContainer.addEventListener('mousedown', handleMouseDown);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
     if (draggable) {
+      currentContainer.addEventListener('mousedown', handleMouseDown);
       currentContainer.addEventListener('touchstart', handleTouchStart, { passive: true });
-      window.addEventListener('touchmove', handleTouchMove, { passive: false });
-      window.addEventListener('touchend', handleTouchEnd, { passive: true });
     }
     if (wheelEnabled) {
       currentContainer.addEventListener('wheel', handleWheel, { passive: false });
     }
     const edgeHoverTarget = currentContainer.parentElement ?? currentContainer;
-    edgeHoverTarget.addEventListener('mousemove', handleEdgeHoverMove);
-    edgeHoverTarget.addEventListener('mouseleave', handleEdgeHoverLeave);
+    const usesPointerEdgeHover = typeof window.PointerEvent === 'function';
+
+    const usesNativeEdgeHover = edgeHoverScroll && edgeHoverInputMode === 'hybrid';
+
+    if (usesNativeEdgeHover && usesPointerEdgeHover) {
+      edgeHoverTarget.addEventListener('pointermove', handleEdgeHoverMove);
+      edgeHoverTarget.addEventListener('pointerleave', handleEdgeHoverLeave);
+      edgeHoverTarget.addEventListener('pointercancel', clearEdgeHover);
+    } else if (usesNativeEdgeHover) {
+      edgeHoverTarget.addEventListener('mousemove', handleEdgeHoverMove);
+      edgeHoverTarget.addEventListener('mouseleave', handleEdgeHoverLeave);
+    }
 
     return () => {
-      currentContainer.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
       if (draggable) {
+        currentContainer.removeEventListener('mousedown', handleMouseDown);
         currentContainer.removeEventListener('touchstart', handleTouchStart);
-        window.removeEventListener('touchmove', handleTouchMove);
-        window.removeEventListener('touchend', handleTouchEnd);
       }
       if (wheelEnabled) {
         currentContainer.removeEventListener('wheel', handleWheel);
       }
-      edgeHoverTarget.removeEventListener('mousemove', handleEdgeHoverMove);
-      edgeHoverTarget.removeEventListener('mouseleave', handleEdgeHoverLeave);
+      if (usesNativeEdgeHover && usesPointerEdgeHover) {
+        edgeHoverTarget.removeEventListener('pointermove', handleEdgeHoverMove);
+        edgeHoverTarget.removeEventListener('pointerleave', handleEdgeHoverLeave);
+        edgeHoverTarget.removeEventListener('pointercancel', clearEdgeHover);
+      } else if (usesNativeEdgeHover) {
+        edgeHoverTarget.removeEventListener('mousemove', handleEdgeHoverMove);
+        edgeHoverTarget.removeEventListener('mouseleave', handleEdgeHoverLeave);
+      }
+      detachMouseDragListeners();
+      detachTouchDragListeners();
     };
-  }, [draggable, handleEdgeHoverLeave, handleEdgeHoverMove, handleMouseDown, handleMouseMove, handleMouseUp, handleTouchEnd, handleTouchMove, handleTouchStart, handleWheel, wheelEnabled]);
-
-  // Debounced resize handler shared by ResizeObserver and window resize fallback
-  const debouncedRecalculate = useCallback(() => {
-    if (resizeDebounceTimerRef.current) {
-      clearTimeout(resizeDebounceTimerRef.current);
-    }
-    resizeDebounceTimerRef.current = setTimeout(() => {
-      resizeDebounceTimerRef.current = null;
-      recalculateLoopPoint();
-    }, RESIZE_DEBOUNCE_MS);
-  }, [recalculateLoopPoint]);
+  }, [
+    detachMouseDragListeners,
+    detachTouchDragListeners,
+    draggable,
+    edgeHoverScroll,
+    edgeHoverInputMode,
+    clearEdgeHover,
+    handleEdgeHoverLeave,
+    handleEdgeHoverMove,
+    handleMouseDown,
+    handleTouchStart,
+    handleWheel,
+    wheelEnabled,
+  ]);
 
   // Resize listener fallback for browsers without ResizeObserver
   useEffect(() => {
-    window.addEventListener('resize', debouncedRecalculate);
+    window.addEventListener('resize', scheduleLoopPointRecalculation);
 
     return () => {
-      window.removeEventListener('resize', debouncedRecalculate);
+      window.removeEventListener('resize', scheduleLoopPointRecalculation);
     };
-  }, [debouncedRecalculate]);
+  }, [scheduleLoopPointRecalculation]);
 
   // ResizeObserver keeps loop measurements in sync with async content changes
   useEffect(() => {
-    if (!containerRef.current || typeof ResizeObserver === 'undefined') return;
+    if (!containerRef.current || !originalGroupRef.current || typeof ResizeObserver === 'undefined') return;
+
+    const currentContainer = containerRef.current;
+    const originalGroup = originalGroupRef.current;
+    const viewport = currentContainer.parentElement ?? currentContainer;
 
     const observer = new ResizeObserver(() => {
-      debouncedRecalculate();
+      scheduleLoopPointRecalculation();
     });
-    observer.observe(containerRef.current);
+    observer.observe(originalGroup);
+
+    if (viewport !== originalGroup) {
+      observer.observe(viewport);
+    }
 
     return () => {
       observer.disconnect();
     };
-  }, [debouncedRecalculate]);
+  }, [scheduleLoopPointRecalculation]);
 
-  // Clean up resize debounce timer on unmount
+  // Clean up deferred measurement work on unmount
   useEffect(() => {
     return () => {
-      if (resizeDebounceTimerRef.current) {
-        clearTimeout(resizeDebounceTimerRef.current);
-        resizeDebounceTimerRef.current = null;
+      if (loopMeasurementFrameRef.current !== null) {
+        cancelAnimationFrame(loopMeasurementFrameRef.current);
+        loopMeasurementFrameRef.current = null;
       }
+      clearEdgeHoverIntervalCache();
     };
-  }, []);
+  }, [clearEdgeHoverIntervalCache]);
 
   // Tab visibility handling
   useEffect(() => {
@@ -751,6 +909,7 @@ function ReactSway({
       setIsTabActive(!document.hidden);
       if (!document.hidden) {
         lastFrameTimeRef.current = performance.now();
+        startAnimationLoop();
       }
     };
 
@@ -758,7 +917,7 @@ function ReactSway({
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, []);
+  }, [startAnimationLoop]);
 
   // Clean up inactivity timer on unmount
   useEffect(() => {
@@ -770,10 +929,11 @@ function ReactSway({
   // Animation loop
   useEffect(() => {
     if (!isTabActive || isPaused) {
-      if (animationFrameRef.current) {
+      if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = null;
       }
+      animationLoopRef.current = null;
       return;
     }
 
@@ -805,37 +965,74 @@ function ReactSway({
         ? normalizedSpeed * REDUCED_MOTION_SPEED_FACTOR
         : normalizedSpeed;
 
-      const edgeHoverMultiplier = edgeHoverScroll ? edgeHoverDirectionRef.current : directionMultiplier;
+      const edgeHoverMultiplier = edgeHoverScroll
+        ? getEdgeHoverVelocityScale(
+          edgeHoverIntensityRef.current,
+          normalizedEdgeHoverSpeedMultiplier,
+        )
+        : directionMultiplier;
+
+      const shouldAutoScroll =
+        ((autoScrollRef.current.desired && autoScrollRef.current.active) ||
+          externalEdgeHoverLeaseRef.current) &&
+        !isDraggingRef.current &&
+        (!edgeHoverScroll || edgeHoverMultiplier !== 0);
 
       // Auto-scroll when enabled and not dragging
-      if (
-        autoScrollRef.current.desired &&
-        autoScrollRef.current.active &&
-        !isDraggingRef.current &&
-        (!edgeHoverScroll || edgeHoverMultiplier !== 0)
-      ) {
-        nextPosition += edgeHoverMultiplier * effectiveSpeed * deltaTime;
+      if (shouldAutoScroll) {
+        const autoScrollDeltaTime = edgeHoverScroll
+          ? Math.min(deltaTime, MAX_EDGE_HOVER_DELTA_TIME)
+          : deltaTime;
+        nextPosition += edgeHoverMultiplier * effectiveSpeed * autoScrollDeltaTime;
       }
 
+      const shouldApplyMomentum = !isDraggingRef.current && Math.abs(velocityRef.current) > 0.1;
+
       // Apply velocity momentum from user interaction
-      if (!isDraggingRef.current && Math.abs(velocityRef.current) > 0.1) {
+      if (shouldApplyMomentum) {
         nextPosition += velocityRef.current * deltaTime;
       }
 
       nextPosition = wrapPosition(nextPosition);
       commitPosition(nextPosition);
 
-      animationFrameRef.current = requestAnimationFrame(animate);
+      if (isDraggingRef.current || shouldAutoScroll || shouldApplyMomentum) {
+        animationFrameRef.current = requestAnimationFrame(animate);
+        return;
+      }
+
+      animationFrameRef.current = null;
+      // A later edge re-entry starts a new temporal segment. Resetting the
+      // timestamp prevents idle wall time from becoming a capped 3-frame jump.
+      lastFrameTimeRef.current = 0;
     };
 
-    animationFrameRef.current = requestAnimationFrame(animate);
+    animationLoopRef.current = animate;
+    startAnimationLoop();
 
     return () => {
-      if (animationFrameRef.current) {
+      if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+
+      if (animationLoopRef.current === animate) {
+        animationLoopRef.current = null;
       }
     };
-  }, [commitPosition, direction, edgeHoverScroll, isHorizontal, isPaused, isTabActive, normalizedFriction, normalizedSpeed, prefersReducedMotion, wrapPosition]);
+  }, [
+    commitPosition,
+    direction,
+    edgeHoverScroll,
+    isPaused,
+    isTabActive,
+    normalizedFriction,
+    normalizedEdgeHoverSpeedMultiplier,
+    normalizedSpeed,
+    prefersReducedMotion,
+    startAnimationLoop,
+    wrapPosition,
+  ]);
 
   // Intersection Observer for lazy visibility detection
   useEffect(() => {
@@ -852,7 +1049,7 @@ function ReactSway({
       {
         root: null,
         rootMargin: lazyRootMargin,
-        threshold: lazyThreshold,
+        threshold: normalizedLazyThreshold,
       }
     );
 
@@ -863,14 +1060,15 @@ function ReactSway({
       items.forEach((item) => observer.unobserve(item));
       observer.disconnect();
     };
-  }, [children, lazy, lazyRootMargin, lazyThreshold]);
+  }, [children, lazy, lazyRootMargin, normalizedLazyThreshold]);
 
   return (
-    <div
-      className="react-sway-container scroller-content"
+    <section
+      aria-label={ariaLabel}
+      className={`react-sway-container scroller-content${className ? ` ${className}` : ''}`}
       ref={containerRef}
       style={{
-        cursor: draggable ? (isDragging ? 'grabbing' : 'grab') : 'default',
+        cursor: draggable ? (isDraggingRef.current ? 'grabbing' : 'grab') : 'default',
         display: isHorizontal ? 'flex' : undefined,
         flexDirection: isHorizontal ? 'row' : undefined,
         height: isHorizontal ? '100%' : 'max-content',
@@ -900,15 +1098,18 @@ function ReactSway({
           aria-hidden="true"
           className="content-group duplicate"
           data-duplicate="true"
+          inert
           key={`duplicate-${duplicateIndex}`}
           role="presentation"
-          style={isHorizontal ? { display: 'flex', flex: '0 0 auto' } : undefined}
+          style={isHorizontal
+            ? { display: 'flex', flex: '0 0 auto', pointerEvents: 'none' }
+            : { pointerEvents: 'none' }}
         >
           {children}
         </aside>
       ))}
-    </div>
+    </section>
   );
-}
+});
 
 export default ReactSway;
