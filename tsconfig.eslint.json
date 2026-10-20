@@ -6,7 +6,9 @@
     "react-sway/vite.config.ts",
     "react-sway/vitest.config.ts",
     "scripts",
-    "vite.config.ts"
+    "vite.config.ts",
+    "e2e",
+    "playwright.config.ts"
   ],
   "compilerOptions": {
     "allowJs": true,

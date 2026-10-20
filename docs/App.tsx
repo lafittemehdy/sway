@@ -181,22 +181,6 @@ const POSTS: DemoPost[] = [
 ];
 
 const EXTERNAL_INPUT_EDGE_HOVER_SIZE_PX = 72;
-const VERTICAL_TEXT_CYCLE_COUNT = 12;
-
-const TEXT_POSTS: DemoPost[] = Array.from({ length: VERTICAL_TEXT_CYCLE_COUNT }, (_, cycleIndex) =>
-  POSTS.map((post, postIndex) => {
-    const sequenceNumber = cycleIndex * POSTS.length + postIndex + 1;
-
-    return {
-      ...post,
-      body: `${post.body} Each return of the passage renews the same historical bargain: the machine offers continuity, and the reader, half sovereign and half captive, follows the movement until the boundary between seeking and surrender becomes almost impossible to name.`,
-      meta: getSequenceMeta(sequenceNumber - 1, POSTS.length * VERTICAL_TEXT_CYCLE_COUNT),
-      sequenceRole: sequenceNumber === 1 ? 'cover' : undefined,
-      veilShape: getVeilShape(sequenceNumber - 1),
-    };
-  }),
-).flat();
-
 const EXTERNAL_INPUT_POSTS: DemoPost[] = POSTS.map((post, postIndex) => ({
   ...post,
   body: `${post.body} The external input route keeps pointer capture outside the Sway runtime while the imperative handle receives edge intent as a continuous signal.`,
@@ -428,7 +412,7 @@ function PostImageFrame({ post }: { post: DemoPost }) {
         <PretextText inline profile="cardMeta" text={post.meta} />
       </span>
       <VeilClip shape={post.veilShape}>
-        <img alt="" aria-hidden="true" className="post-image" draggable="false" src={post.image} />
+        <img alt="" aria-hidden="true" className="post-image" decoding="async" draggable="false" loading="lazy" src={post.image} />
       </VeilClip>
     </figure>
   );
@@ -569,7 +553,7 @@ function SwayTrack({
 /**
  * Demonstrates external input routing when another surface owns pointer capture.
  */
-function ExternalInputRoutingExample() {
+function ExternalInputRoutingExample({ motionEnabled }: { motionEnabled: boolean }) {
   const [edgeIntent, setEdgeIntent] = useState<'idle' | 'left' | 'right'>('idle');
   const [edgeSize, setEdgeSize] = useState(EXTERNAL_INPUT_EDGE_HOVER_SIZE_PX);
   const [inputSource, setInputSource] = useState<ExternalInputSource>('idle');
@@ -728,7 +712,7 @@ function ExternalInputRoutingExample() {
             direction="left"
              draggable={false}
              edgeHoverInputMode="external"
-            edgeHoverScroll
+            edgeHoverScroll={motionEnabled}
             edgeHoverSize={edgeSize}
             edgeHoverSpeedMultiplier={DEFAULT_EDGE_HOVER_SPEED_MULTIPLIER}
             keyboard={false}
@@ -752,6 +736,9 @@ function ExternalInputRoutingExample() {
  * Renders the docs app used to inspect every public ReactSway interaction mode.
  */
 function App() {
+  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+  const [motionPaused, setMotionPaused] = useState(false);
+  const motionEnabled = !motionPaused && !reducedMotion;
   const finePointerShowcase = useMediaQuery('(hover: hover) and (pointer: fine)');
   const desktopWheelShowcase = useMediaQuery('(hover: hover) and (pointer: fine) and (min-width: 860px)');
   const [horizontal, setHorizontal] = useState<HorizontalPanelState>({
@@ -768,12 +755,16 @@ function App() {
     wheelMode: 'off',
   });
 
-  const verticalEdgeActive = finePointerShowcase && vertical.running && vertical.edgeHoverEnabled;
+  const verticalEdgeActive = motionEnabled && finePointerShowcase && vertical.running && vertical.edgeHoverEnabled;
   const verticalWheelEnabled = desktopWheelShowcase && vertical.wheelMode !== 'off' && !verticalEdgeActive;
   const verticalWheelMode = vertical.wheelMode === 'capture' ? 'capture' : 'axis';
   const horizontalSpeed = SHOWCASE.horizontal.baseSpeed * horizontal.speedFactor;
-  const horizontalDescription = getHorizontalDescription(horizontal);
-  const verticalDescription = getVerticalDescription(vertical, verticalEdgeActive, verticalWheelEnabled);
+  const horizontalDescription = motionEnabled
+    ? getHorizontalDescription(horizontal)
+    : 'Automatic motion is paused. Drag the rail or focus it and use the arrow keys to explore.';
+  const verticalDescription = motionEnabled
+    ? getVerticalDescription(vertical, verticalEdgeActive, verticalWheelEnabled)
+    : 'Automatic motion is paused. Wheel and touch input remain available according to the controls below.';
   const horizontalDirectionControls: ControlOption[] = [
     {
       active: horizontal.direction === 'left',
@@ -863,6 +854,28 @@ function App() {
   return (
     <PretextProvider>
       <main className="sway-shell">
+        <header className="page-header">
+          <div className="page-intro">
+            <p className="page-eyebrow">React component / live playground</p>
+            <h1>Sway<span aria-hidden="true">.</span></h1>
+            <p className="page-description">Content in continuous motion. Explore each direction, drag a rail, or try the controls below.</p>
+          </div>
+          <div className="page-actions">
+            <code>npm install react-sway</code>
+            <nav aria-label="Project links">
+              <a href="https://github.com/lafittemehdy/sway#readme">Documentation ↗</a>
+              <a href="https://www.npmjs.com/package/react-sway">npm ↗</a>
+            </nav>
+            <button
+              aria-pressed={!motionEnabled}
+              disabled={reducedMotion}
+              onClick={() => setMotionPaused((paused) => !paused)}
+              type="button"
+            >
+              {reducedMotion ? 'Reduced motion enabled' : motionPaused ? 'Resume motion' : 'Pause motion'}
+            </button>
+          </div>
+        </header>
         <section className="mosaic-arrangement" aria-label="ReactSway feature showcase" data-grid-system="true">
           <article className="mosaic-cell control-cell layout-horizontal-controls">
             <AxisToolbar
@@ -902,7 +915,7 @@ function App() {
             aria-labelledby="horizontal-title"
           >
             <SwayTrack
-              autoScroll
+              autoScroll={motionEnabled}
               direction={horizontal.direction}
               draggable={horizontal.dragEnabled}
               keyboard={horizontal.keyboardEnabled}
@@ -922,7 +935,7 @@ function App() {
             aria-labelledby="vertical-title"
           >
             <SwayTrack
-              autoScroll={vertical.running}
+              autoScroll={motionEnabled && vertical.running}
               direction={vertical.direction}
               draggable={false}
               edgeHoverEnabled={verticalEdgeActive}
@@ -932,13 +945,13 @@ function App() {
               wheelEnabled={verticalWheelEnabled}
               wheelMode={verticalWheelMode}
             >
-              {TEXT_POSTS.map((post) => (
+              {POSTS.map((post) => (
                 <TextPost key={`vertical-${post.meta}-${post.title}`} post={post} />
               ))}
             </SwayTrack>
           </article>
 
-          <ExternalInputRoutingExample />
+          <ExternalInputRoutingExample motionEnabled={motionEnabled} />
 
         </section>
         <aside aria-hidden="true" className="page-scroll-lane" />

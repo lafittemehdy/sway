@@ -31,11 +31,14 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           cache: npm
           cache-dependency-path: package-lock.json
           node-version: ${{ matrix.node-version }}
+
+      - name: Install canonical npm
+        run: npm install --global npm@12.2.0
 
       - name: Validate workspace metadata
         run: node scripts/check-workspace.mjs
@@ -48,6 +51,9 @@ jobs:
 
       - name: Run linter
         run: npm run lint
+
+      - name: Typecheck demo and package
+        run: npm run typecheck
 
       - name: Run tests
         run: npm run test --workspace=react-sway
@@ -64,11 +70,14 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           cache: npm
           cache-dependency-path: package-lock.json
           node-version: 22.x
+
+      - name: Install canonical npm
+        run: npm install --global npm@12.2.0
 
       - name: Validate workspace metadata
         run: node scripts/check-workspace.mjs
@@ -84,6 +93,12 @@ jobs:
 
       - name: Build demo app
         run: npm run build
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Test demo in browser
+        run: npm run test:browser
 
       - name: Verify package can be packed
         run: npm pack --workspace=react-sway --dry-run

@@ -34,22 +34,20 @@ Check out the [react-sway README](./react-sway/README.md) for full API docs and 
 
 ```
 sway/
-  AGENTS.md      # Repository architecture and interaction policy
   docs/          # Demo app source with Pretext-measured showcase copy
   react-sway/    # Publishable npm package
 ```
 
 ## Getting started
 
-Use Node.js 22.12 or newer from the supported Node 22 or 24 release lines. The
-repository pins npm 11.18.0 as its canonical lockfile writer while retaining
-clean-install compatibility with npm 10.9 and npm 11. npm 12 is intentionally
-deferred because its Node engine floor is narrower than the repository's
-current supported Node 22 and 24 ranges.
+Use Node.js 22.22.2+, 24.15+, or 26+ with npm 12.2.0. The root lockfile is
+shared by the library and demo. TypeScript stays on 6.0.3 because the current
+ESLint TypeScript parser requires TypeScript below 6.1.
 
 ```bash
 git clone https://github.com/lafittemehdy/sway.git
 cd sway
+npm install --global npm@12.2.0
 npm ci
 npm run dev
 ```
@@ -66,19 +64,28 @@ root `package-lock.json`. The demo runs at `http://localhost:5173` by default.
 | `npm run build:package`   | Build the publishable package and declarations               |
 | `npm run check`           | Verify workspace integrity, lint, test, and build everything |
 | `npm run check:workspace` | Validate root manifests, lockfile ownership, and local links |
-| `npm run deploy`          | Deploy the demo to GitHub Pages                              |
 | `npm run dev`             | Start the demo dev server against package source             |
 | `npm run lint`            | Lint the complete workspace                                  |
 | `npm run preview`         | Preview the production build locally                         |
+| `npm run typecheck`       | Typecheck the demo, package, and browser tests                |
+| `npm run test:browser`    | Test the built demo in Chromium (install with `npx playwright install chromium`) |
 | `npm run test`            | Run the `react-sway` contract and regression tests           |
+
+The playground includes project links, a motion pause control, and automatic
+pause when the OS requests reduced motion. The vertical stream uses one set of
+posts; ReactSway supplies the repetitions needed to fill its viewport.
 
 ## CI/CD
 
 This repo uses GitHub Actions for automation:
 
-- **Test** (`ci.yml`) runs lint and tests on Node 22 and 24 for every push and PR to `main`.
+- **Test** (`ci.yml`) runs lint, type checks, and tests on Node 22 and 24, plus dependency audit, package packing, demo build, and Chromium smoke tests.
 - **Deploy Demo** (`pages.yml`) builds and deploys the demo to GitHub Pages when relevant files change on `main`.
 - **Publish** (`publish.yml`) publishes `react-sway` to npm when a GitHub release is created.
+
+Deployment uses the Pages workflow only. To deploy the committed `main` branch,
+run `gh workflow run pages.yml` or use **Run workflow** in GitHub Actions. The old
+`gh-pages` CLI and its vulnerable dependency chain have been removed.
 
 ## Contributing
 

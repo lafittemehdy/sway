@@ -11,6 +11,7 @@ import {
   useMemo,
   useRef,
   useState,
+  version as reactVersion,
 } from 'react';
 import {
   DEFAULT_EDGE_HOVER_SIZE,
@@ -70,6 +71,11 @@ const WHEEL_IMMEDIATE_DELTA_FACTOR = 0.14;
 /** Minimum touch movement before a gesture is classified by axis. */
 const TOUCH_AXIS_LOCK_THRESHOLD_PX = 8;
 
+// React 17/18 serialize inert as an unknown attribute; React 19 expects a boolean.
+const INERT_ATTRIBUTE: Record<string, boolean | string> = {
+  inert: Number.parseInt(reactVersion, 10) >= 19 ? true : '',
+};
+
 export type SwayAxis = 'horizontal' | 'vertical';
 export type SwayDirection = 'down' | 'left' | 'right' | 'up';
 export type SwayEdgeHoverInputMode = 'external' | 'hybrid';
@@ -86,6 +92,12 @@ interface LoopMeasurement {
   contentSize: number;
   isHorizontal: boolean;
   viewportSize: number;
+}
+
+function isInteractiveTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest(
+    'a, button, input, select, textarea, [contenteditable]:not([contenteditable="false"])',
+  ));
 }
 
 export interface ReactSwayHandle {
@@ -551,7 +563,7 @@ const ReactSway = forwardRef<ReactSwayHandle, ReactSwayProps>(function ReactSway
   }, []);
 
   const handleKeyDown = useCallback((e: ReactKeyboardEvent<HTMLElement>) => {
-    if (!keyboard) return;
+    if (!keyboard || isInteractiveTarget(e.target)) return;
 
     switch (e.key) {
       case ' ':
@@ -649,7 +661,7 @@ const ReactSway = forwardRef<ReactSwayHandle, ReactSwayProps>(function ReactSway
   }, [detachMouseDragListeners, handleMouseCancel, handleMouseMove, handleMouseUp]);
 
   const handleMouseDown = useCallback((e: globalThis.MouseEvent) => {
-    if (!draggable) return;
+    if (!draggable || e.button !== 0 || isInteractiveTarget(e.target)) return;
     e.preventDefault();
     containerRef.current?.focus();
     setDraggingState(true);
@@ -722,7 +734,7 @@ const ReactSway = forwardRef<ReactSwayHandle, ReactSwayProps>(function ReactSway
   }, [detachTouchDragListeners, handleTouchEnd, handleTouchMove]);
 
   const handleTouchStart = useCallback((e: globalThis.TouchEvent) => {
-    if (!draggable || e.touches.length !== 1) return;
+    if (!draggable || e.touches.length !== 1 || isInteractiveTarget(e.target)) return;
     containerRef.current?.focus();
     touchInteractionStateRef.current = 'pending';
     lastTouchXRef.current = e.touches[0].clientX;
@@ -734,7 +746,7 @@ const ReactSway = forwardRef<ReactSwayHandle, ReactSwayProps>(function ReactSway
   }, [attachTouchDragListeners, draggable]);
 
   const handleWheel = useCallback((e: globalThis.WheelEvent) => {
-    if (!wheelEnabled) return false;
+    if (!wheelEnabled || e.defaultPrevented) return false;
     const currentContainer = e.currentTarget instanceof HTMLElement ? e.currentTarget : containerRef.current;
     if (!currentContainer) return false;
 
@@ -784,6 +796,10 @@ const ReactSway = forwardRef<ReactSwayHandle, ReactSwayProps>(function ReactSway
     externalEdgeHoverLeaseRef.current = false;
     setEdgeHoverIntensity(0);
   }, [setEdgeHoverIntensity]);
+
+  useEffect(() => {
+    if (!edgeHoverScroll) clearEdgeHover();
+  }, [clearEdgeHover, edgeHoverScroll]);
 
   useImperativeHandle(ref, () => ({
     clearEdgeHover,
@@ -1098,7 +1114,7 @@ const ReactSway = forwardRef<ReactSwayHandle, ReactSwayProps>(function ReactSway
           aria-hidden="true"
           className="content-group duplicate"
           data-duplicate="true"
-          inert
+          {...INERT_ATTRIBUTE}
           key={`duplicate-${duplicateIndex}`}
           role="presentation"
           style={isHorizontal

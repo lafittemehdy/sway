@@ -10,6 +10,9 @@ on:
       - "package.json"
       - "package-lock.json"
       - "react-sway/src/**"
+      - "react-sway/package.json"
+      - "react-sway/vite.config.ts"
+      - ".github/workflows/pages.yml"
       - "vite.config.ts"
 
   workflow_dispatch:
@@ -39,11 +42,14 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           cache: npm
           cache-dependency-path: package-lock.json
           node-version: 24.x
+
+      - name: Install canonical npm
+        run: npm install --global npm@12.2.0
 
       - name: Validate workspace metadata
         run: node scripts/check-workspace.mjs
@@ -67,4 +73,4 @@ jobs:
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

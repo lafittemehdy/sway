@@ -18,6 +18,16 @@ function createWheelEvent(init: WheelEventInit) {
 }
 
 describe('wheel input policy', () => {
+  it.each(['axis', 'capture'] as const)('leaves zoom gestures to the browser in %s mode', (mode) => {
+    expect(getOwnedWheelDelta(createWheelEvent({ ctrlKey: true, deltaY: 100 }), createContainer(), false, mode)).toBeNull();
+  });
+
+  it.each([0, NaN, Infinity])('ignores invalid or empty wheel deltas (%s)', (deltaY) => {
+    const event = createWheelEvent({});
+    Object.defineProperty(event, 'deltaY', { value: deltaY });
+    expect(getOwnedWheelDelta(event, createContainer(), false, 'capture')).toBeNull();
+  });
+
   it('normalizes pixel, line, and page deltas into pixels', () => {
     const container = createContainer();
 

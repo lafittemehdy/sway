@@ -87,8 +87,10 @@ export function getOwnedWheelDelta(
   isHorizontal: boolean,
   wheelMode: SwayWheelMode,
 ) {
+  if (event.ctrlKey) return null;
   const deltaX = normalizeWheelDelta(event, container, 'x');
   const deltaY = normalizeWheelDelta(event, container, 'y');
+  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY) || (deltaX === 0 && deltaY === 0)) return null;
   const absDeltaX = Math.abs(deltaX);
   const absDeltaY = Math.abs(deltaY);
 

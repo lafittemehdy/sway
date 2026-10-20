@@ -3,7 +3,7 @@
  */
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createRef } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest';
 
 import {
   DEFAULT_EDGE_HOVER_SIZE,
@@ -38,10 +38,10 @@ beforeEach(() => {
     mockIntersectionOptions = options;
     this.disconnect = mockDisconnect;
     this.observe = mockObserve;
-    this.root = null;
-    this.rootMargin = '';
+    Object.defineProperty(this, 'root', { value: null });
+    Object.defineProperty(this, 'rootMargin', { value: '' });
     this.takeRecords = vi.fn(() => []);
-    this.thresholds = [];
+    Object.defineProperty(this, 'thresholds', { value: [] });
     this.unobserve = mockUnobserve;
   });
   vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
@@ -78,6 +78,53 @@ describe('public edge-hover configuration contract', () => {
 });
 
 describe('ReactSway', () => {
+  it('leaves nested controls usable with keyboard, mouse, and touch', () => {
+    const onPause = vi.fn();
+    render(<ReactSway onPause={onPause}><input aria-label="Search" /><button>Open</button></ReactSway>);
+    const input = screen.getByRole('textbox');
+    const button = screen.getByRole('button', { name: 'Open' });
+    expect(fireEvent.keyDown(input, { key: 'ArrowDown' })).toBe(true);
+    expect(fireEvent.keyDown(button, { key: ' ' })).toBe(true);
+    expect(fireEvent.mouseDown(button, { button: 0 })).toBe(true);
+    fireEvent.touchStart(input, { touches: [{ clientX: 10, clientY: 10 }] });
+    fireEvent.touchMove(window, { touches: [{ clientX: 10, clientY: 40 }] });
+    expect(onPause).not.toHaveBeenCalled();
+  });
+
+  it('leaves secondary mouse clicks available to the browser', () => {
+    const onPause = vi.fn();
+    render(<ReactSway onPause={onPause}><span>Item</span></ReactSway>);
+    expect(fireEvent.mouseDown(screen.getByRole('region'), { button: 2 })).toBe(true);
+    expect(onPause).not.toHaveBeenCalled();
+  });
+
+  it('stops an external edge-hover lease when edge-hover mode is disabled', async () => {
+    const ref = createRef<ReactSwayHandle>();
+    const onScroll = vi.fn();
+    const { rerender } = render(<ReactSway ref={ref} autoScroll={false} edgeHoverScroll onScroll={onScroll}>Item</ReactSway>);
+    const viewport = screen.getByRole('region').parentElement!;
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ top: 0, bottom: 200 } as DOMRect);
+    act(() => { ref.current?.handleEdgeHover({ clientX: 0, clientY: 195 }); });
+    await waitFor(() => expect(onScroll).toHaveBeenCalled());
+    rerender(<ReactSway ref={ref} autoScroll={false} edgeHoverScroll={false} onScroll={onScroll}>Item</ReactSway>);
+    onScroll.mockClear();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
+    expect(onScroll).not.toHaveBeenCalled();
+    rerender(<ReactSway ref={ref} autoScroll={false} edgeHoverScroll onScroll={onScroll}>Item</ReactSway>);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
+    expect(onScroll).not.toHaveBeenCalled();
+  });
+
+  it('leaves an already consumed external wheel event to its owner', () => {
+    const ref = createRef<ReactSwayHandle>();
+    const onScroll = vi.fn();
+    render(<ReactSway ref={ref} autoScroll={false} onScroll={onScroll}>Item</ReactSway>);
+    const event = new WheelEvent('wheel', { cancelable: true, deltaY: 100 });
+    event.preventDefault();
+    expect(ref.current?.handleWheel(event)).toBe(false);
+    expect(onScroll).not.toHaveBeenCalled();
+  });
+
   describe('rendering', () => {
     it('renders children content with duplicates', () => {
       render(
@@ -314,7 +361,7 @@ describe('ReactSway', () => {
 
   describe('draggable prop', () => {
     const hasWindowListenerCall = (
-      spy: ReturnType<typeof vi.spyOn<typeof window, 'addEventListener'>>,
+      spy: MockInstance<typeof window.addEventListener>,
       eventName: string,
     ) => spy.mock.calls.some(([type]) => type === eventName);
 
@@ -881,7 +928,7 @@ describe('ReactSway', () => {
 
       const item = container.querySelector('.content-item') as HTMLElement;
       mockIntersectionCallback?.(
-        [{ isIntersecting: true, target: item } as IntersectionObserverEntry],
+        [{ boundingClientRect: item.getBoundingClientRect(), intersectionRatio: 1, intersectionRect: item.getBoundingClientRect(), isIntersecting: true, rootBounds: null, target: item, time: 0 }],
         {} as IntersectionObserver,
       );
 
@@ -897,7 +944,7 @@ describe('ReactSway', () => {
 
       const item = container.querySelector('.content-item') as HTMLElement;
       mockIntersectionCallback?.(
-        [{ isIntersecting: false, target: item } as IntersectionObserverEntry],
+        [{ boundingClientRect: item.getBoundingClientRect(), intersectionRatio: 0, intersectionRect: item.getBoundingClientRect(), isIntersecting: false, rootBounds: null, target: item, time: 0 }],
         {} as IntersectionObserver,
       );
 
@@ -1233,7 +1280,7 @@ describe('ReactSway', () => {
 
   describe('touch interactions', () => {
     const hasWindowListenerCall = (
-      spy: ReturnType<typeof vi.spyOn<typeof window, 'addEventListener'>>,
+      spy: MockInstance<typeof window.addEventListener>,
       eventName: string,
     ) => spy.mock.calls.some(([type]) => type === eventName);
 

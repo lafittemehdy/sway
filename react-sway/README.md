@@ -16,7 +16,8 @@ It works by duplicating your content to create a seamless loop and uses CSS tran
 *   **User Friendly Interactions:**
     *   Click and drag to scroll.
     *   Swipe on touch devices.
-    *   Mouse wheel support with axis-aware intent detection, delta-mode normalization, and velocity capping.
+    *   Mouse wheel support with axis-aware intent detection, delta-mode normalization, and velocity capping. Browser zoom gestures pass through.
+    *   Nested buttons, links, and editable fields retain their native interactions.
     *   Keyboard controls: Spacebar to pause/resume, Arrow keys to scroll, Home/End to jump.
 *   **External Input Bridge:** Use `ref` with `ReactSwayHandle` to route wheel and edge-hover intent from a parent drag/drop surface into Sway.
 *   **Idle-Safe Listeners:** Global drag listeners are attached only during active drag or touch gestures and cleaned up on release, cancel, blur, and unmount.
@@ -290,12 +291,12 @@ function MinimalEdgeHoverExamples() {
 | `edgeHoverInputMode` | `'external' \| 'hybrid'` | `'hybrid'` | Use intrinsic pointer sensing plus the imperative bridge, or external imperative ownership only for composed drag surfaces. |
 | `edgeHoverScroll` | `boolean` | `false` | Only auto-scroll while hovering the active axis boundary: top/bottom for vertical, left/right for horizontal. A short ingress feather removes sensor chatter; velocity then accelerates through the physical edge and reaches its bounded cap one activation-zone width beyond it. |
 | `edgeHoverSize` | `number` | `96` | Thickness in pixels of each edge-hover activation zone. |
-| `edgeHoverSpeedMultiplier` | `number` | `6` | Maximum edge-hover velocity as a multiple of `speed`. The physical edge retains the established 3x response, then accelerates to the bounded `1`–`10` maximum beyond the viewport; set `1` for constant speed. |
+| `edgeHoverSpeedMultiplier` | `number` | `6` | Maximum edge-hover velocity as a multiple of `speed`. The physical edge retains the established 3x response, then accelerates to the bounded `1`â€“`10` maximum beyond the viewport; set `1` for constant speed. |
 | `friction` | `number` | `0.95` | Momentum decay coefficient (0-1, lower = more friction). |
 | `keyboard` | `boolean` | `true` | Enable keyboard controls (Space, Arrow keys, Home/End). |
 | `lazy` | `boolean` | `true` | Enable lazy visibility detection via IntersectionObserver. |
 | `lazyRootMargin` | `string` | `'100px'` | IntersectionObserver `rootMargin` for lazy visibility detection. |
-| `lazyThreshold` | `number` | `0.01` | IntersectionObserver `threshold`, normalized to the inclusive `0`–`1` interval. |
+| `lazyThreshold` | `number` | `0.01` | IntersectionObserver `threshold`, normalized to the inclusive `0`â€“`1` interval. |
 | `onPause` | `() => void` | - | Fired once when active autonomous scrolling transitions to interaction-paused. |
 | `onResume` | `() => void` | - | Fired when interaction-paused autonomous scrolling resumes. |
 | `onScroll` | `(position: number) => void` | - | Fired on every position change with the current scroll position. |

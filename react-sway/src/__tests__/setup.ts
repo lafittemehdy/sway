@@ -1,7 +1,7 @@
 /**
  * Shared testing-library setup for Vitest.
  */
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 import { vi } from 'vitest';
 
 // jsdom does not implement matchMedia — provide a default mock

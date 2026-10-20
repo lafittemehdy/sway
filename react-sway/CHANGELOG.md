@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Preserve browser zoom gestures, nested controls, and secondary mouse clicks.
+- Stop external edge-hover motion when edge-hover mode is disabled.
+- Preserve inert duplicate groups on React 17 and 18 as well as React 19.
+- Update the development toolchain; keep TypeScript 6 for parser compatibility.
+
 ## 0.4.0
 
 - Added horizontal and vertical axis semantics with page-safe touch behavior.

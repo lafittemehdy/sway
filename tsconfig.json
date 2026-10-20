@@ -26,6 +26,5 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["docs", "vite.config.ts", "react-sway/src"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["docs", "vite.config.ts", "react-sway/src", "e2e", "playwright.config.ts"]
 }

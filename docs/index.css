@@ -148,6 +148,99 @@ img {
   z-index: 12;
 }
 
+.page-header {
+  align-items: end;
+  border: 1px solid var(--color-line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  justify-content: space-between;
+  padding: clamp(24px, 4vw, 56px);
+}
+
+.page-intro {
+  max-width: 35rem;
+}
+
+.page-eyebrow,
+.page-description,
+.page-actions {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.page-eyebrow {
+  color: var(--color-muted);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.page-intro h1 {
+  font-size: clamp(52px, 8vw, 96px);
+  font-weight: 400;
+  letter-spacing: -0.05em;
+  line-height: 1.2;
+}
+
+.page-intro h1 span {
+  color: var(--color-accent);
+}
+
+.page-description {
+  color: var(--color-muted);
+  margin-top: 12px;
+}
+
+.page-actions {
+  display: grid;
+  gap: 14px;
+}
+
+.page-actions code {
+  border: 1px solid var(--color-line);
+  padding: 10px 14px;
+}
+
+.page-actions nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.page-actions a {
+  color: var(--color-muted);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+.page-actions a:hover {
+  color: var(--color-white);
+}
+
+.page-actions button {
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  min-height: 44px;
+  padding: 8px 18px;
+}
+
+.page-actions button[aria-pressed="true"] {
+  color: var(--color-accent);
+}
+
+.page-actions button:disabled {
+  cursor: default;
+}
+
+a:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+}
+
 .axis-toolbar {
   align-content: center;
   align-items: stretch;
@@ -1164,6 +1257,61 @@ img {
   }
 }
 
+@media (max-width: 640px) {
+  .mosaic-arrangement {
+    --control-height: 36px;
+    --grid-step: clamp(320px, 95vw, 440px);
+
+    grid-auto-rows: auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .layout-horizontal-controls,
+  .layout-horizontal-axis,
+  .layout-vertical-controls,
+  .layout-vertical-axis,
+  .layout-bridge-controls,
+  .layout-bridge-demo {
+    grid-column: 1;
+  }
+
+  .layout-horizontal-controls { grid-row: 1; }
+  .layout-horizontal-axis { grid-row: 2; }
+  .layout-vertical-controls { grid-row: 3; }
+  .layout-vertical-axis { grid-row: 4; }
+  .layout-bridge-controls { grid-row: 5; }
+  .layout-bridge-demo { grid-row: 6; }
+
+  .control-cell {
+    min-height: 0;
+    padding: 24px;
+  }
+
+  .axis-toolbar-description {
+    min-height: 0;
+  }
+
+  .media-cell,
+  .text-cell,
+  .bridge-cell {
+    height: var(--grid-step);
+  }
+
+  .media-tile,
+  .bridge-stage .media-tile {
+    align-items: center;
+    gap: 16px;
+    grid-template-columns: minmax(0, 110px) minmax(0, 1fr);
+    grid-template-rows: auto;
+    padding: 20px;
+  }
+
+  .bridge-stage .media-tile .post-image-frame,
+  .bridge-stage .media-tile .post-copy {
+    align-self: center;
+  }
+}
+
 @media (max-width: 360px) {
   :root {
     --control-height: 30px;
@@ -1171,7 +1319,7 @@ img {
   }
 
   .control-cell {
-    padding: 7px;
+    padding: 16px;
   }
 
   .axis-toolbar {
