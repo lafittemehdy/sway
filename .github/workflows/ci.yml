@@ -33,8 +33,7 @@ jobs:
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          cache: npm
-          cache-dependency-path: package-lock.json
+          package-manager-cache: false
           node-version: ${{ matrix.node-version }}
 
       - name: Install canonical npm
@@ -72,8 +71,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          cache: npm
-          cache-dependency-path: package-lock.json
+          package-manager-cache: false
           node-version: 22.x
 
       - name: Install canonical npm
