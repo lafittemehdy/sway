@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.3 - 2026-10-21
 
 - Preserve browser zoom gestures, nested controls, and secondary mouse clicks.
 - Stop external edge-hover motion when edge-hover mode is disabled.

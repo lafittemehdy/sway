@@ -7,6 +7,9 @@ for (const width of [1440, 390, 320]) {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto('./');
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sway.');
+    const clipIds = await page.locator('clipPath').evaluateAll((clips) => clips.map((clip) => clip.id));
+    expect(clipIds.length).toBeGreaterThan(0);
+    expect(new Set(clipIds).size).toBe(clipIds.length);
     await expect(page.getByRole('link', { name: 'Documentation' })).toHaveAttribute('href', /github.com\/lafittemehdy\/sway/);
     const pause = page.getByRole('button', { name: 'Pause motion' });
     await pause.click();
