@@ -1,3 +1,4 @@
+/** Runs production-demo interaction checks against a dedicated local preview server. */
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({

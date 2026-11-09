@@ -4,6 +4,11 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  // React 17 lacks the JSX-runtime exports needed by native Node ESM resolution.
+  oxc: {
+    jsx: { runtime: 'classic' },
+    jsxInject: "import React from 'react'",
+  },
   build: {
     emptyOutDir: true,
     lib: {
@@ -12,7 +17,7 @@ export default defineConfig({
       formats: ['es', 'cjs'],
     },
     rolldownOptions: {
-      external: ['react', 'react-dom', 'react/jsx-runtime'],
+      external: ['react', 'react-dom'],
       output: {
         exports: 'named',
       },

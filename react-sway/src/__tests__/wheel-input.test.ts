@@ -1,9 +1,11 @@
 /**
  * Specifies wheel normalization and native-scroll ownership as pure contracts.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { getOwnedWheelDelta, normalizeWheelDelta } from '../wheel-input';
+
+afterEach(() => document.body.replaceChildren());
 
 function createContainer() {
   const container = document.createElement('div');
@@ -30,6 +32,7 @@ describe('wheel input policy', () => {
 
   it('normalizes pixel, line, and page deltas into pixels', () => {
     const container = createContainer();
+    document.body.append(container);
 
     expect(normalizeWheelDelta(createWheelEvent({ deltaY: 12 }), container, 'y')).toBe(12);
     expect(normalizeWheelDelta(

@@ -32,7 +32,7 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install canonical npm
-        run: npm install --global npm@12.2.0
+        run: npm install --global npm@12.2.2
 
       - name: Show tool versions
         run: |
@@ -41,6 +41,16 @@ jobs:
 
       - name: Validate workspace metadata
         run: node scripts/check-workspace.mjs
+
+      - name: Verify release tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./react-sway/package.json').version")"
+          if [ "$RELEASE_TAG" != "v$PACKAGE_VERSION" ]; then
+            echo "::error::Release tag must match react-sway package version."
+            exit 1
+          fi
 
       - name: Install workspace dependencies
         run: npm ci

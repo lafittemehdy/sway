@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [22.x, 24.x]
+        node-version: [22.x, 24.x, 26.x]
 
     steps:
       - name: Checkout repository
@@ -37,7 +37,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Install canonical npm
-        run: npm install --global npm@12.2.0
+        run: npm install --global npm@12.2.2
 
       - name: Validate workspace metadata
         run: node scripts/check-workspace.mjs
@@ -75,7 +75,7 @@ jobs:
           node-version: 22.x
 
       - name: Install canonical npm
-        run: npm install --global npm@12.2.0
+        run: npm install --global npm@12.2.2
 
       - name: Validate workspace metadata
         run: node scripts/check-workspace.mjs
@@ -98,8 +98,8 @@ jobs:
       - name: Test demo in browser
         run: npm run test:browser
 
-      - name: Verify package can be packed
-        run: npm pack --workspace=react-sway --dry-run
+      - name: Verify packed React 17, 18, and 19 consumers
+        run: npm run check:package
 
   ci-success:
     name: CI Success

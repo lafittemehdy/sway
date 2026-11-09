@@ -48,7 +48,7 @@ jobs:
           node-version: 24.x
 
       - name: Install canonical npm
-        run: npm install --global npm@12.2.0
+        run: npm install --global npm@12.2.2
 
       - name: Validate workspace metadata
         run: node scripts/check-workspace.mjs

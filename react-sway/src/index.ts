@@ -3,6 +3,10 @@
  */
 export { default as ReactSway } from './ReactSway';
 export {
+  DEFAULT_DEPTH_PERSPECTIVE,
+  DEFAULT_DEPTH_SPACING,
+} from './depth-position';
+export {
   DEFAULT_EDGE_HOVER_SIZE,
   DEFAULT_EDGE_HOVER_SPEED_MULTIPLIER,
 } from './edge-hover-velocity';

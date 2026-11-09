@@ -9,7 +9,7 @@
     "packageManager": {
       "name": "npm",
       "onFail": "error",
-      "version": "^12.2.0"
+      "version": "^12.2.2"
     },
     "runtime": {
       "name": "node",
@@ -19,35 +19,36 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.64.1",
-    "@types/node": "^26.6.5",
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@typescript-eslint/eslint-plugin": "^8.72.0",
-    "@typescript-eslint/parser": "^8.72.0",
-    "@vitejs/plugin-react": "^6.1.2",
-    "eslint": "^10.13.0",
+    "@typescript-eslint/eslint-plugin": "^8.72.1",
+    "@typescript-eslint/parser": "^8.72.1",
+    "@vitejs/plugin-react": "^6.2.1",
+    "eslint": "^10.14.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
-    "globals": "^17.13.0",
-    "typescript": "^6.0.3",
-    "vite": "^8.3.4"
+    "globals": "^17.14.0",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.6"
   },
   "homepage": "https://lafittemehdy.github.io/sway/",
   "name": "sway",
-  "packageManager": "npm@12.2.0",
+  "packageManager": "npm@12.2.2",
   "private": true,
   "scripts": {
     "build": "vite build",
     "build:package": "npm run build --workspace=react-sway",
     "check": "npm run check:workspace && npm run lint && npm run typecheck && npm test && npm run build:package && npm run build",
+    "check:package": "node scripts/check-package.mjs",
     "check:workspace": "node scripts/check-workspace.mjs",
     "dev": "vite",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "npm run test --workspace=react-sway",
-    "typecheck": "tsc --noEmit",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "typecheck": "tsc --noEmit"
   },
   "type": "module",
   "version": "0.1.1",
@@ -56,5 +57,8 @@
   ],
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "overrides": {
+    "minimatch": "^11.0.5"
   }
 }

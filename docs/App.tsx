@@ -22,6 +22,7 @@ import {
 import { ArchClip, RoundedLeftClip } from 'react-veil';
 
 import { PretextProvider, PretextText } from './pretext';
+import { DepthExample } from './DepthExample';
 
 import 'react-veil/style.css';
 import './index.css';
@@ -954,6 +955,7 @@ function App() {
           <ExternalInputRoutingExample motionEnabled={motionEnabled} />
 
         </section>
+        <DepthExample autoScroll={motionEnabled} />
         <aside aria-hidden="true" className="page-scroll-lane" />
       </main>
     </PretextProvider>

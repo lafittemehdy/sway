@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 - 2026-11-09
+
+- Add perspective depth scrolling with toward/away directions and configurable camera distance and plane spacing.
+- Mount each depth child once and recycle only at zero opacity without crossing the camera.
+- Share wheel, drag, touch, keyboard, pause, and lifecycle behavior across all three axes.
+- Add `active` and `reducedMotion` for host lifecycle and accessibility integration; preserve React 17/18/19 and existing planar behavior.
+- Add responsive depth documentation and browser coverage, plus geometry and lifecycle regressions.
+- Make the ESM build directly importable in Node with React 17, and verify packed ESM/CJS/SSR consumers on React 17/18/19.
+- Update development dependencies and npm, test Node 22/24/26, and resolve all known dependency audit findings. Keep TypeScript 6.0.3 for ESLint parser compatibility.
+
 ## 0.4.3 - 2026-10-21
 
 - Preserve browser zoom gestures, nested controls, and secondary mouse clicks.

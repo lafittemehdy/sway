@@ -10,15 +10,16 @@ An npm workspace for [`react-sway`](https://www.npmjs.com/package/react-sway) an
 
 ## What is react-sway?
 
-A React component that turns a list of items into a smooth, infinitely scrolling loop. It supports vertical and horizontal scrolling, auto-scrolls, pauses when users interact, and works with touch, mouse, wheel, keyboard, edge-hover, and external interaction bridges out of the box.
+A React component that turns a list of items into a smooth, infinitely scrolling loop. It supports vertical, horizontal, and perspective depth scrolling, auto-scrolls, pauses when users interact, and works with touch, mouse, wheel, keyboard, edge-hover, and external interaction bridges out of the box.
 
-Under the hood it duplicates your content with CSS transforms to keep things seamless. The duplicated blocks are wrapped in inert `<aside>` elements with `aria-hidden="true"` and `role="presentation"` so screen readers, search engines, and pointer interactions stay focused on the canonical content.
+Vertical and horizontal loops use inert duplicate groups. Depth mode renders each direct child once on its own 3D plane, recycling it at zero opacity before it reaches the camera. The application controls image sizes, offsets, tilt, and surrounding UI.
 
 The demo app uses [`@chenglou/pretext`](https://github.com/chenglou/pretext) for measured text layout. Pretext is scoped to documentation UI copy; it is not part of the `react-sway` package runtime contract.
 
 ### Features
 
-- Infinite looping scroll on the vertical or horizontal axis with configurable speed
+- Infinite looping scroll on vertical, horizontal, or depth axes with configurable speed
+- Perspective camera and depth spacing controls, toward/away directions, and no depth content duplication
 - Edge-hover mode that only auto-scrolls while the pointer is at the active axis boundary, with bounded speed amplification by boundary depth
 - Click-and-drag, swipe, normalized mouse wheel, and keyboard controls (Space, Arrow keys, Home/End)
 - Axis-aware or full-capture wheel ownership for horizontal rails and embedded showcases
@@ -40,14 +41,14 @@ sway/
 
 ## Getting started
 
-Use Node.js 22.22.2+, 24.15+, or 26+ with npm 12.2.0. The root lockfile is
+Use Node.js 22.22.2+, 24.15+, or 26+ with npm 12.2.2. The root lockfile is
 shared by the library and demo. TypeScript stays on 6.0.3 because the current
 ESLint TypeScript parser requires TypeScript below 6.1.
 
 ```bash
 git clone https://github.com/lafittemehdy/sway.git
 cd sway
-npm install --global npm@12.2.0
+npm install --global npm@12.2.2
 npm ci
 npm run dev
 ```
@@ -64,6 +65,7 @@ root `package-lock.json`. The demo runs at `http://localhost:5173` by default.
 | `npm run build:package`   | Build the publishable package and declarations               |
 | `npm run check`           | Verify workspace integrity, lint, test, and build everything |
 | `npm run check:workspace` | Validate root manifests, lockfile ownership, and local links |
+| `npm run check:package`   | Pack the built library and verify ESM, CJS, and SSR with React 17/18/19 (requires registry access) |
 | `npm run dev`             | Start the demo dev server against package source             |
 | `npm run lint`            | Lint the complete workspace                                  |
 | `npm run preview`         | Preview the production build locally                         |
@@ -71,7 +73,11 @@ root `package-lock.json`. The demo runs at `http://localhost:5173` by default.
 | `npm run test:browser`    | Test the built demo in Chromium (install with `npx playwright install chromium`) |
 | `npm run test`            | Run the `react-sway` contract and regression tests           |
 
-The playground includes project links, a motion pause control, and automatic
+The development-only `minimatch` override keeps the toolchain on the patched
+11.x release while upstream lint dependencies finish updating their ranges.
+`npm audit` currently reports no known vulnerabilities.
+
+The playground includes project links, a motion pause control, a depth image gallery, and automatic
 pause when the OS requests reduced motion. The vertical stream uses one set of
 posts; ReactSway supplies the repetitions needed to fill its viewport.
 
@@ -79,7 +85,7 @@ posts; ReactSway supplies the repetitions needed to fill its viewport.
 
 This repo uses GitHub Actions for automation:
 
-- **Test** (`ci.yml`) runs lint, type checks, and tests on Node 22 and 24, plus dependency audit, package packing, demo build, and Chromium smoke tests.
+- **Test** (`ci.yml`) runs lint, type checks, and tests on Node 22, 24, and 26, plus dependency audit, package packing, demo build, and Chromium smoke tests.
 - **Deploy Demo** (`pages.yml`) builds and deploys the demo to GitHub Pages when relevant files change on `main`.
 - **Publish** (`publish.yml`) publishes `react-sway` to npm when a GitHub release is created.
 
