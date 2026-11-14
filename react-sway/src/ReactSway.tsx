@@ -19,7 +19,7 @@ import {
   DEFAULT_DEPTH_SPACING,
   getDepthItemState,
   normalizeDepthLength,
-} from './depth-position';
+} from './depth-position.js';
 import {
   DEFAULT_EDGE_HOVER_SIZE,
   DEFAULT_EDGE_HOVER_SPEED_MULTIPLIER,
@@ -28,10 +28,10 @@ import {
   normalizeEdgeHoverIntensity,
   normalizeEdgeHoverSpeedMultiplier,
   type VisibleEdgeInterval,
-} from './edge-hover-velocity';
-import { getOwnedWheelDelta, type SwayWheelMode } from './wheel-input';
+} from './edge-hover-velocity.js';
+import { getOwnedWheelDelta, type SwayWheelMode } from './wheel-input.js';
 
-export type { SwayWheelMode } from './wheel-input';
+export type { SwayWheelMode } from './wheel-input.js';
 
 /** Velocity applied per arrow key press (pixels). */
 const ARROW_KEY_VELOCITY = 15;

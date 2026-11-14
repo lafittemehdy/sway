@@ -100,3 +100,7 @@ Contributions are welcome! Open an issue or submit a pull request.
 ## License
 
 [MIT](./LICENSE)
+
+## Community
+
+See [Contributing](CONTRIBUTING.md), [Code of Conduct](CODE_OF_CONDUCT.md), and [Security Policy](SECURITY.md).

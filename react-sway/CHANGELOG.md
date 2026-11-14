@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1 - 2026-11-14
+
+- Fix public declaration imports for strict NodeNext consumers and verify React version compatibility against packed artifacts.
+
+- Update dependencies and example applications to current compatible stable releases.
+- Include contribution guidelines, the Contributor Covenant, and a private security reporting policy in the repository and npm package.
+- Update lint, build, DOM testing, and Vite dependencies; retain TypeScript 6 while compiler API tools require it.
+
 ## 0.5.0 - 2026-11-09
 
 - Add perspective depth scrolling with toward/away directions and configurable camera distance and plane spacing.

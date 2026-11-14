@@ -18,7 +18,11 @@ try {
     const cwd = join(directory, `react-${major}`);
     mkdirSync(cwd);
     writeFileSync(join(cwd, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
-    runNpm(['install', '--no-fund', '--no-audit', tarball, `react@${major}`, `react-dom@${major}`], cwd);
+    runNpm(['install', '--no-fund', '--no-audit', tarball, `react@${major}`, `react-dom@${major}`, "typescript@7.0.2", `@types/react@${major}`, `@types/react-dom@${major}`], cwd);
+    const declaration = "import { createElement } from 'react'; import { ReactSway } from 'react-sway'; createElement(ReactSway, { axis: 'depth', children: 'Example' });";
+    for (const extension of ['mts', 'cts']) writeFileSync(join(cwd, `consumer.${extension}`), declaration);
+    writeFileSync(join(cwd, 'tsconfig.json'), JSON.stringify({ compilerOptions: { module: 'NodeNext', moduleResolution: 'NodeNext', target: 'ES2022', strict: true, noEmit: true, types: [] }, include: ['consumer.*ts'] }));
+    execFileSync(process.execPath, [join(cwd, 'node_modules/typescript/bin/tsc'), '-p', cwd], { cwd, stdio: 'inherit' });
     writeFileSync(join(cwd, 'probe.mjs'), `
       import assert from 'node:assert/strict';
       import { createRequire } from 'node:module';
